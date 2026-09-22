@@ -33,11 +33,19 @@ export async function ensureProfile(user) {
     (user.email || '').split('@')[0]
   const color = PALETTE[Math.abs(hashCode(user.id)) % PALETTE.length]
 
-  const { error } = await supabase.from('profiles').upsert(
-    { id: user.id, email: user.email, display_name: display, color },
-    { onConflict: 'id', ignoreDuplicates: false }
-  )
-  throwIf(error)
+  // Reconcile by EMAIL, not id. If Google/Supabase ever issues a new auth id
+  // for the same email (e.g. the OAuth provider was reconfigured), a plain
+  // upsert-on-id would try to insert a second row and hit the unique-email
+  // constraint. So: if a row already owns this email under a different id,
+  // repoint it to the current id via an RPC that also migrates the user's
+  // boards, memberships, ratings and comments. Otherwise upsert normally.
+  const { error: recErr } = await supabase.rpc('reconcile_profile', {
+    p_id: user.id,
+    p_email: user.email,
+    p_display: display,
+    p_color: color,
+  })
+  throwIf(recErr)
 
   const { error: e2 } = await supabase.rpc('claim_invites')
   throwIf(e2)

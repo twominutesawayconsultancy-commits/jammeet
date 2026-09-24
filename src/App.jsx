@@ -369,7 +369,7 @@ function ProfilePopover({ profile, onSaved, onClose, notify }) {
       <div className="cache-row">
         <span className="dim tiny">
           Stems saved on this device: <strong>{cacheMb === null ? '…' : `${cacheMb} MB`}</strong>
-          <br />They load instantly on reopen.
+          <br />Saved songs skip the download next time.
         </span>
         <button
           className="btn btn-ghost btn-sm"
@@ -1041,20 +1041,31 @@ function SongView({ boardId, song, members, myRole, profile, refresh, onBack, no
         const demoStems = song.stems.filter((s) => s.source === 'demo' || !s.storage_path)
         const realStems = song.stems.filter((s) => !(s.source === 'demo' || !s.storage_path))
 
+        // Memory holds only the most recently opened song: drop any other song's
+        // decoded audio before decoding this one, so a phone never holds two.
+        cache.retainOnly(realStems.map((s) => [s.id, s.storage_path]))
+
         // Anything already decoded in memory is free — reopening a song you
         // just closed should be instant.
-        // Hold references now: loading other stems may evict these from the cache.
         const inMemory = new Map()
         for (const s of realStems) {
           const b = cache.getMemory(s.id, s.storage_path)
           if (b) inMemory.set(s.id, b)
         }
         const needed = realStems.filter((s) => !inMemory.has(s.id))
-        setLoadMsg(
-          needed.length === 0
-            ? (demoStems.length ? 'Synthesizing demo loops…' : 'Ready')
-            : demoStems.length ? 'Synthesizing demo loops…' : 'Loading stems…'
-        )
+
+        // Say whether we're downloading or just reading what this device saved.
+        const onDevice = await Promise.all(needed.map((s) => cache.hasStored(s.id, s.storage_path)))
+        const toDownload = onDevice.filter((x) => !x).length
+        const label = toDownload
+          ? `Downloading ${toDownload} stem${toDownload === 1 ? '' : 's'}`
+          : 'Loading stems saved on this device'
+        if (!cancelled) {
+          setLoadMsg(
+            demoStems.length ? 'Synthesizing demo loops…'
+              : needed.length ? `${label}…` : 'Ready'
+          )
+        }
 
         const demoBufs = await synthDemoStems(demoStems, song)
 
@@ -1063,7 +1074,7 @@ function SongView({ boardId, song, members, myRole, profile, refresh, onBack, no
         const total = needed.length
         const tick = () => {
           done += 1
-          if (!cancelled && total) setLoadMsg(`Loading stems… ${done}/${total}`)
+          if (!cancelled && total) setLoadMsg(`${label}… ${done}/${total}`)
         }
         const fetched = new Map()
         await Promise.all(

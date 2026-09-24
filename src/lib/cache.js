@@ -1,65 +1,57 @@
 // Stem caching, two layers deep.
 //
-//   Layer 1 — memory: decoded AudioBuffers, keyed by stem id + file path (so a
-//             stem replaced by another admin is never served stale). Survives
-//             closing and reopening a song within the same tab. Instant (no
-//             download, no decode). Capped by size, least-recently-used evicted
-//             first, so a phone tab can't run out of memory. Cleared on refresh.
-//   Layer 2 — IndexedDB: the raw downloaded bytes, keyed by stem id + a
-//             fingerprint of the file path. Survives refreshes, browser
-//             restarts, and days off. Skips the network; only pays decode.
+//   Layer 1 — memory: decoded AudioBuffers for the MOST RECENTLY OPENED song
+//             only, keyed by stem id + file path (so a stem replaced by another
+//             admin is never served stale). Reopening the song you just closed
+//             is instant (no download, no decode). Opening a different song
+//             drops the previous one first, so memory never holds more than one
+//             song, which the mixer is holding anyway while it plays.
+//             Decoded audio is ~10 MB per stereo minute per stem, so a byte cap
+//             smaller than one song would evict the song itself.
+//   Layer 2 — IndexedDB: the raw downloaded bytes, same keys. Survives
+//             refreshes, browser restarts, and days off. Skips the network;
+//             still pays the decode. Two stores: `audio` holds the bytes and
+//             `meta` holds {size, used}, so eviction and the size readout never
+//             load hundreds of MB of audio into memory (fatal on phones).
 //
-// We key by stem id rather than URL because signed URLs carry a rotating token
-// and would never match twice.
+// We key by stem id + path rather than URL because signed URLs carry a
+// rotating token and would never match twice.
 
 const DB_NAME = 'jam-meet-stems'
-const STORE = 'audio'
-const DB_VERSION = 1
-const MAX_BYTES = 600 * 1024 * 1024 // ~600 MB ceiling, oldest evicted first
+const AUDIO = 'audio'
+const META = 'meta'
+const DB_VERSION = 2
+const MAX_BYTES = 600 * 1024 * 1024 // ~600 MB ceiling, least recently used evicted first
+
+function keyFor(stemId, path) {
+  return `${stemId}::${path || ''}`
+}
 
 // ---------- Layer 1: memory ----------
 
-// Decoded audio is ~10 MB per stereo minute, far bigger than the file itself.
-const MAX_MEMORY_BYTES = 256 * 1024 * 1024
-
-const memory = new Map() // keyFor(stemId, path) -> AudioBuffer; insertion order = LRU
-let memoryBytes = 0
-
-function decodedBytes(buffer) {
-  return buffer.length * buffer.numberOfChannels * 4 // Float32 samples
-}
+const memory = new Map() // keyFor(stemId, path) -> AudioBuffer
 
 export function getMemory(stemId, path) {
-  const key = keyFor(stemId, path)
-  const buffer = memory.get(key)
-  if (buffer) { memory.delete(key); memory.set(key, buffer) } // mark most recent
-  return buffer
+  return memory.get(keyFor(stemId, path))
 }
 
 export function putMemory(stemId, path, buffer) {
-  const key = keyFor(stemId, path)
-  if (memory.has(key)) memoryBytes -= decodedBytes(memory.get(key))
-  memory.delete(key)
-  memory.set(key, buffer)
-  memoryBytes += decodedBytes(buffer)
-  // Evict least recently used, but never the buffer just added.
-  for (const [k, b] of memory) {
-    if (memoryBytes <= MAX_MEMORY_BYTES || k === key) break
-    memory.delete(k)
-    memoryBytes -= decodedBytes(b)
-  }
+  memory.set(keyFor(stemId, path), buffer)
+}
+
+/** Keep only these [stemId, path] entries; call when a song starts loading. */
+export function retainOnly(entries) {
+  const keep = new Set(entries.map(([stemId, path]) => keyFor(stemId, path)))
+  for (const k of memory.keys()) if (!keep.has(k)) memory.delete(k)
 }
 
 export function clearMemory() {
   memory.clear()
-  memoryBytes = 0
 }
 
 /** Forget every decoded buffer for one stem (used when its audio is replaced). */
 export function dropMemory(stemId) {
-  for (const [k, b] of memory) {
-    if (k.startsWith(`${stemId}::`)) { memory.delete(k); memoryBytes -= decodedBytes(b) }
-  }
+  for (const k of memory.keys()) if (k.startsWith(`${stemId}::`)) memory.delete(k)
 }
 
 // ---------- Layer 2: IndexedDB ----------
@@ -68,98 +60,118 @@ let dbPromise = null
 
 function openDb() {
   if (dbPromise) return dbPromise
-  dbPromise = new Promise((resolve, reject) => {
+  dbPromise = new Promise((resolve) => {
     if (typeof indexedDB === 'undefined') return resolve(null)
     const req = indexedDB.open(DB_NAME, DB_VERSION)
     req.onupgradeneeded = () => {
       const db = req.result
-      if (!db.objectStoreNames.contains(STORE)) {
-        const store = db.createObjectStore(STORE, { keyPath: 'key' })
-        store.createIndex('used', 'used')
-      }
+      // v1 kept bytes and bookkeeping in one store; start v2 clean.
+      if (db.objectStoreNames.contains(AUDIO)) db.deleteObjectStore(AUDIO)
+      if (db.objectStoreNames.contains(META)) db.deleteObjectStore(META)
+      db.createObjectStore(AUDIO, { keyPath: 'key' })
+      db.createObjectStore(META, { keyPath: 'key' })
     }
-    req.onsuccess = () => resolve(req.result)
-    req.onerror = () => resolve(null) // private mode / quota denied — degrade quietly
+    req.onsuccess = () => {
+      const db = req.result
+      db.onversionchange = () => db.close() // let a newer tab upgrade
+      resolve(db)
+    }
+    req.onerror = () => resolve(null) // private mode / storage blocked — degrade quietly
+    req.onblocked = () => resolve(null)
   })
   return dbPromise
 }
 
-function tx(db, mode) {
-  return db.transaction(STORE, mode).objectStore(STORE)
+function result(request) {
+  return new Promise((resolve) => {
+    request.onsuccess = () => resolve(request.result)
+    request.onerror = () => resolve(undefined)
+  })
 }
 
-function keyFor(stemId, path) {
-  return `${stemId}::${path || ''}`
+function done(transaction) {
+  return new Promise((resolve) => {
+    transaction.oncomplete = () => resolve(true)
+    transaction.onerror = () => resolve(false)
+    transaction.onabort = () => resolve(false)
+  })
+}
+
+/** Cheap check (no audio read) for whether a stem's bytes are on this device. */
+export async function hasStored(stemId, path) {
+  try {
+    const db = await openDb()
+    if (!db) return false
+    const meta = db.transaction(META, 'readonly').objectStore(META)
+    return !!(await result(meta.get(keyFor(stemId, path))))
+  } catch {
+    return false
+  }
 }
 
 export async function getStored(stemId, path) {
   try {
     const db = await openDb()
     if (!db) return null
-    const store = tx(db, 'readonly')
-    const rec = await new Promise((resolve) => {
-      const r = store.get(keyFor(stemId, path))
-      r.onsuccess = () => resolve(r.result || null)
-      r.onerror = () => resolve(null)
-    })
+    const key = keyFor(stemId, path)
+    const rec = await result(db.transaction(AUDIO, 'readonly').objectStore(AUDIO).get(key))
     if (!rec) return null
-    touch(stemId, path) // fire and forget; keeps eviction order fresh
+    // Keep eviction order fresh without rewriting the audio itself.
+    db.transaction(META, 'readwrite').objectStore(META)
+      .put({ key, size: rec.bytes.byteLength, used: Date.now() })
     return rec.bytes
   } catch {
     return null
   }
 }
 
+// Ask once for "persistent" storage so phone browsers don't quietly clear the
+// cache under storage pressure. Browsers may say no; that's fine.
+let persistAsked = false
+function askToPersist() {
+  if (persistAsked) return
+  persistAsked = true
+  try { navigator.storage?.persist?.().catch(() => {}) } catch { /* unsupported */ }
+}
+
 export async function putStored(stemId, path, bytes) {
   try {
     const db = await openDb()
     if (!db) return
-    const store = tx(db, 'readwrite')
-    store.put({
-      key: keyFor(stemId, path),
-      bytes,
-      size: bytes.byteLength,
-      used: Date.now(),
-    })
-    evictIfNeeded()
+    askToPersist()
+    const key = keyFor(stemId, path)
+    const t = db.transaction([AUDIO, META], 'readwrite')
+    t.objectStore(AUDIO).put({ key, bytes })
+    t.objectStore(META).put({ key, size: bytes.byteLength, used: Date.now() })
+    if (await done(t)) scheduleEvict()
   } catch {
     // Quota exceeded or storage blocked — caching is an optimisation, not a
     // requirement. The app still works, just slower.
   }
 }
 
-async function touch(stemId, path) {
-  try {
-    const db = await openDb()
-    if (!db) return
-    const store = tx(db, 'readwrite')
-    const r = store.get(keyFor(stemId, path))
-    r.onsuccess = () => {
-      const rec = r.result
-      if (rec) { rec.used = Date.now(); store.put(rec) }
-    }
-  } catch { /* non-fatal */ }
+// One eviction pass at a time, however many stems finish downloading at once.
+let evictChain = Promise.resolve()
+function scheduleEvict() {
+  evictChain = evictChain.then(evictIfNeeded, evictIfNeeded)
 }
 
 async function evictIfNeeded() {
   try {
     const db = await openDb()
     if (!db) return
-    const store = tx(db, 'readwrite')
-    const all = await new Promise((resolve) => {
-      const r = store.getAll()
-      r.onsuccess = () => resolve(r.result || [])
-      r.onerror = () => resolve([])
-    })
+    const all = (await result(db.transaction(META, 'readonly').objectStore(META).getAll())) || []
     let total = all.reduce((n, r) => n + (r.size || 0), 0)
     if (total <= MAX_BYTES) return
-    all.sort((a, b) => (a.used || 0) - (b.used || 0)) // oldest first
-    const store2 = tx(await openDb(), 'readwrite')
+    all.sort((a, b) => (a.used || 0) - (b.used || 0)) // least recently used first
+    const t = db.transaction([AUDIO, META], 'readwrite')
     for (const rec of all) {
       if (total <= MAX_BYTES) break
-      store2.delete(rec.key)
+      t.objectStore(AUDIO).delete(rec.key)
+      t.objectStore(META).delete(rec.key)
       total -= rec.size || 0
     }
+    await done(t)
   } catch { /* non-fatal */ }
 }
 
@@ -169,21 +181,19 @@ export async function clearAll() {
   try {
     const db = await openDb()
     if (!db) return
-    tx(db, 'readwrite').clear()
+    const t = db.transaction([AUDIO, META], 'readwrite')
+    t.objectStore(AUDIO).clear()
+    t.objectStore(META).clear()
+    await done(t)
   } catch { /* non-fatal */ }
 }
 
-/** Total bytes cached on this device, for display. */
+/** Total bytes cached on this device, for display. Reads sizes only. */
 export async function cacheSize() {
   try {
     const db = await openDb()
     if (!db) return 0
-    const store = tx(db, 'readonly')
-    const all = await new Promise((resolve) => {
-      const r = store.getAll()
-      r.onsuccess = () => resolve(r.result || [])
-      r.onerror = () => resolve([])
-    })
+    const all = (await result(db.transaction(META, 'readonly').objectStore(META).getAll())) || []
     return all.reduce((n, r) => n + (r.size || 0), 0)
   } catch {
     return 0

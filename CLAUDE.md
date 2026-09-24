@@ -68,8 +68,11 @@ docs/AUDIT.md              technical audit + owner answers
   and handles looping, metronome lookahead, and pass detection.
 - **Play counting:** a pass = transport reaching the end (each loop lap counts) →
   `increment_play` RPC. Rating unlocks at 3 passes (UI-enforced only).
-- **Stem cache** (`src/lib/cache.js`): decoded AudioBuffers in memory (256 MB LRU)
-  + raw bytes in IndexedDB (~600 MB LRU), both keyed by `stemId::storage_path`.
+- **Stem cache** (`src/lib/cache.js`): decoded AudioBuffers in memory for the most
+  recently opened song only (`retainOnly` at load start; decoded audio is ~10 MB per
+  stereo minute per stem, so never byte-cap below one song) + raw bytes in IndexedDB
+  (~600 MB LRU; `audio` store for bytes, `meta` store for size/used — never `getAll`
+  the audio store), all keyed by `stemId::storage_path`.
 
 ## Conventions
 - Function components + hooks; 2-space indent, no semicolons, single quotes.

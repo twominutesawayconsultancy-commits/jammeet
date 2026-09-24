@@ -617,3 +617,11 @@ select { cursor: pointer; }
   .master { margin-left: 0; width: 100%; }
   .modal-scrim { padding-top: 4vh; }
 }
+
+/* --- device cache row in the profile popover --- */
+.cache-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line);
+}
+.cache-row strong { color: var(--teal); font-family: var(--font-mono); font-weight: 500; }
+.btn.btn-sm { padding: 5px 9px; font-size: 11px; }

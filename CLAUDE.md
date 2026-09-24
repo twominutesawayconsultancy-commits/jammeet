@@ -17,7 +17,7 @@ proposed Phase 1 sequence.
 - Supabase: Postgres + RLS + Auth (Google OAuth only) + Storage.
   Project ref `ukbmynpcddkyjktvwdfr` (`https://ukbmynpcddkyjktvwdfr.supabase.co`).
 - Vercel auto-deploys the `main` branch; every branch gets a preview URL.
-- Live app: https://jammeet.vercel.app (README still says `jam-meet.vercel.app` — wrong).
+- Live app: https://jammeet.vercel.app (the only URL the band uses).
 - Env vars (baked in at build time): `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`.
   Missing vars → `supabase` is `null` → app renders `SetupScreen`.
 
@@ -33,19 +33,16 @@ No test, lint, or CI setup exists yet (Phase 1 adds them).
 ```
 index.html                 shell + Google Fonts; loads /src/main.jsx
 src/main.jsx               React entry (StrictMode)
-src/App.jsx                the ENTIRE UI (~1,450 lines): auth, boards, lanes, console, modals
+src/App.jsx                the ENTIRE UI (~1,530 lines): auth, boards, lanes, console, modals
 src/styles.css             dark studio/console design system
 src/supabaseClient.js      client from env vars (or null)
 src/lib/api.js             ALL database + storage calls
 src/lib/audio.js           demo-stem synth, Mixer, VU metering, metronome, formatTime
+src/lib/cache.js           stem cache (memory LRU + IndexedDB)
 supabase/schema.sql        tables, RLS, triggers, RPCs, storage bucket — idempotent
+supabase/migration-002-profile-reconcile.sql   secure reconcile_profile (live since 2026-09-24)
+docs/AUDIT.md              technical audit + owner answers
 ```
-**Unreconciled copies at the repo root** — `App.jsx`, `api.js`, `cache.js`,
-`styles.css` — are newer versions (stem cache, rev-stamped uploads,
-`reconcile_profile` auth fix) that were uploaded to the wrong folder. **Vite does not
-build them.** `supabase/migration-002-profile-reconcile.sql` (secure
-`reconcile_profile`) is applied to the live DB as of 2026-09-24, so the client may now
-call it. See `docs/AUDIT.md` §A–B and "Answers so far".
 
 ## Architecture
 - **Routing** is in-memory state in `App` (`{name:'home'|'board', boardId, songId}`);
@@ -62,16 +59,17 @@ call it. See `docs/AUDIT.md` §A–B and "Answers so far".
   null `user_id`, claimed by `claim_invites()` on login.
 - **Stems:** `source='demo'` stems store no audio — synthesized in-browser from the
   song's key/BPM/signature (`synthDemoStems`). `source='upload'` stems live in the
-  private `stems` bucket at `<boardId>/<songId>/<stemId>.<ext>` (the root `api.js`
-  adds `-<rev>`), fetched via 1-hour signed URLs. Storage RLS derives permissions from
-  the first path segment (board id) — keep that path scheme.
+  private `stems` bucket at `<boardId>/<songId>/<stemId>-<rev>.<ext>` (older uploads
+  lack `-<rev>`; a replace always writes a new path, busting caches), fetched via
+  1-hour signed URLs. Storage RLS derives permissions from the first path segment
+  (board id) — keep that path scheme.
 - **Mixer** (`audio.js`): one shared `AudioContext`; per-track gain + analyser;
   sample-synced start with 80 ms lead; `update()` is driven by the SongView rAF loop
   and handles looping, metronome lookahead, and pass detection.
 - **Play counting:** a pass = transport reaching the end (each loop lap counts) →
   `increment_play` RPC. Rating unlocks at 3 passes (UI-enforced only).
-- **Stem cache** (root `cache.js`, not yet built): decoded AudioBuffers in memory +
-  raw bytes in IndexedDB keyed by `stemId::storage_path`, ~600 MB LRU.
+- **Stem cache** (`src/lib/cache.js`): decoded AudioBuffers in memory (256 MB LRU)
+  + raw bytes in IndexedDB (~600 MB LRU), both keyed by `stemId::storage_path`.
 
 ## Conventions
 - Function components + hooks; 2-space indent, no semicolons, single quotes.

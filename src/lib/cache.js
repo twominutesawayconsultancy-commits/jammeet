@@ -1,8 +1,10 @@
 // Stem caching, two layers deep.
 //
-//   Layer 1 — memory: decoded AudioBuffers, keyed by stem id. Survives closing
-//             and reopening a song within the same tab. Instant (no download,
-//             no decode). Cleared on page refresh.
+//   Layer 1 — memory: decoded AudioBuffers, keyed by stem id + file path (so a
+//             stem replaced by another admin is never served stale). Survives
+//             closing and reopening a song within the same tab. Instant (no
+//             download, no decode). Capped by size, least-recently-used evicted
+//             first, so a phone tab can't run out of memory. Cleared on refresh.
 //   Layer 2 — IndexedDB: the raw downloaded bytes, keyed by stem id + a
 //             fingerprint of the file path. Survives refreshes, browser
 //             restarts, and days off. Skips the network; only pays decode.
@@ -17,23 +19,47 @@ const MAX_BYTES = 600 * 1024 * 1024 // ~600 MB ceiling, oldest evicted first
 
 // ---------- Layer 1: memory ----------
 
-const memory = new Map() // stemId -> AudioBuffer
+// Decoded audio is ~10 MB per stereo minute, far bigger than the file itself.
+const MAX_MEMORY_BYTES = 256 * 1024 * 1024
 
-export function getMemory(stemId) {
-  return memory.get(stemId)
+const memory = new Map() // keyFor(stemId, path) -> AudioBuffer; insertion order = LRU
+let memoryBytes = 0
+
+function decodedBytes(buffer) {
+  return buffer.length * buffer.numberOfChannels * 4 // Float32 samples
 }
 
-export function putMemory(stemId, buffer) {
-  memory.set(stemId, buffer)
+export function getMemory(stemId, path) {
+  const key = keyFor(stemId, path)
+  const buffer = memory.get(key)
+  if (buffer) { memory.delete(key); memory.set(key, buffer) } // mark most recent
+  return buffer
+}
+
+export function putMemory(stemId, path, buffer) {
+  const key = keyFor(stemId, path)
+  if (memory.has(key)) memoryBytes -= decodedBytes(memory.get(key))
+  memory.delete(key)
+  memory.set(key, buffer)
+  memoryBytes += decodedBytes(buffer)
+  // Evict least recently used, but never the buffer just added.
+  for (const [k, b] of memory) {
+    if (memoryBytes <= MAX_MEMORY_BYTES || k === key) break
+    memory.delete(k)
+    memoryBytes -= decodedBytes(b)
+  }
 }
 
 export function clearMemory() {
   memory.clear()
+  memoryBytes = 0
 }
 
-/** Forget one stem's decoded buffer (used when its audio is replaced). */
+/** Forget every decoded buffer for one stem (used when its audio is replaced). */
 export function dropMemory(stemId) {
-  memory.delete(stemId)
+  for (const [k, b] of memory) {
+    if (k.startsWith(`${stemId}::`)) { memory.delete(k); memoryBytes -= decodedBytes(b) }
+  }
 }
 
 // ---------- Layer 2: IndexedDB ----------

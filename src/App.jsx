@@ -89,6 +89,8 @@ export default function App() {
   const [session, setSession] = useState(null)
   const [profile, setProfile] = useState(null)
   const [booting, setBooting] = useState(true)
+  const [profileError, setProfileError] = useState(null)
+  const [profileAttempt, setProfileAttempt] = useState(0)
   const [route, setRoute] = useState({ name: 'home' })
   const [toasts, setToasts] = useState([])
 
@@ -112,20 +114,29 @@ export default function App() {
 
   useEffect(() => {
     let alive = true
+    setProfileError(null)
     if (session?.user) {
       api.ensureProfile(session.user)
         .then((p) => { if (alive) setProfile(p) })
-        .catch((e) => notify(`Sign-in setup failed: ${e.message}`))
+        .catch((e) => { if (alive) setProfileError(e.message) })
     } else {
       setProfile(null)
       setRoute({ name: 'home' })
     }
     return () => { alive = false }
-  }, [session?.user?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [session?.user?.id, profileAttempt]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!supabase) return <SetupScreen />
   if (booting) return <FullBleed><div className="boot-pulse">warming up the room…</div></FullBleed>
   if (!session) return <AuthGate toasts={toasts} />
+  if (!profile && profileError) {
+    return (
+      <ProfileErrorScreen
+        message={profileError}
+        onRetry={() => setProfileAttempt((n) => n + 1)}
+      />
+    )
+  }
 
   return (
     <div className="app">
@@ -232,6 +243,33 @@ function AuthGate({ toasts }) {
         </button>
       </div>
       <Toasts toasts={toasts} />
+    </FullBleed>
+  )
+}
+
+/** Shown when the profile can't be set up after sign-in, so the user is never
+ *  stuck on "Loading boards…" with no way to sign out. */
+function ProfileErrorScreen({ message, onRetry }) {
+  return (
+    <FullBleed>
+      <div className="setup-card">
+        <Wordmark />
+        <h2>Couldn't finish signing you in</h2>
+        <p>Your Google sign-in worked, but setting up your profile failed:</p>
+        <pre className="wrap">{message}</pre>
+        <p className="dim">
+          Try again in a moment. If it keeps happening, sign out and back in, or
+          send this message to your bandleader.
+        </p>
+        <div className="row gap">
+          <button className="btn btn-primary" onClick={onRetry}>
+            <RefreshCw size={14} /> Try again
+          </button>
+          <button className="btn btn-ghost" onClick={() => api.signOut()}>
+            <LogOut size={14} /> Sign out
+          </button>
+        </div>
+      </div>
     </FullBleed>
   )
 }

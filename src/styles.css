@@ -222,6 +222,7 @@ select { cursor: pointer; }
   padding: 12px; font-family: var(--font-mono); font-size: 12px;
   overflow-x: auto; align-self: stretch;
 }
+.setup-card pre.wrap { white-space: pre-wrap; word-break: break-word; }
 
 /* ---------------- pages ---------------- */
 

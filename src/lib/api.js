@@ -22,7 +22,7 @@ export async function signOut() {
 }
 
 /**
- * Called on every sign-in. Upserts the profile row AND claims any pending
+ * Called on every sign-in. Reconciles the profile row AND claims any pending
  * invites that match the user's email (via the claim_invites RPC). Without
  * this, a freshly-invited user is logged in but "owns nothing".
  */
@@ -33,10 +33,16 @@ export async function ensureProfile(user) {
     (user.email || '').split('@')[0]
   const color = PALETTE[Math.abs(hashCode(user.id)) % PALETTE.length]
 
-  const { error } = await supabase.from('profiles').upsert(
-    { id: user.id, email: user.email, display_name: display, color },
-    { onConflict: 'id', ignoreDuplicates: false }
-  )
+  // Reconcile via RPC (supabase/migration-002-profile-reconcile.sql) rather than
+  // a plain upsert: it keeps a user's edited stage name, and if Google issues a
+  // new auth id for an existing email it moves that user's boards, memberships,
+  // ratings and comments over. The server trusts auth.uid(), not these args.
+  const { error } = await supabase.rpc('reconcile_profile', {
+    p_id: user.id,
+    p_email: user.email,
+    p_display: display,
+    p_color: color,
+  })
   throwIf(error)
 
   const { error: e2 } = await supabase.rpc('claim_invites')

@@ -100,6 +100,26 @@ and whether `reconcile_profile` exists in the live DB. **Owner questions listed 
    be added to Supabase Redirect URLs?
 4. Will you keep uploading via the GitHub web UI, or move to branches/PRs?
 
+### Answers so far (2026-09-24)
+1. Prod Source is `eb5fcb9` on `main` → Vercel Git integration. **Confirmed: prod runs
+   the old `src/` code.**
+2. A read-only `pg_proc` query for `reconcile_profile` / `handle_new_user` on the live
+   DB returned **no rows** → the original migration-002 was never applied (and its SQL
+   is lost). A new `supabase/migration-002-profile-reconcile.sql` has been written from
+   scratch and tested on a local Postgres with Supabase's `auth` stubbed (see PR).
+   Why `handle_new_user` also didn't appear is still unexplained → owner runs a
+   function/trigger inventory before applying.
+3. `VITE_SUPABASE_ANON_KEY` already shows "Production and Preview" in Vercel.
+   Supabase Redirect URL for previews still to do.
+4. Moving to branches + PRs (owner reviews on preview, merges on GitHub).
+
+### Found while writing migration-002
+- **Stage names reset on every page load.** `ensureProfile` upserts
+  `display_name` from Google on each load, overwriting whatever the user saved in
+  the profile popover. `reconcile_profile` only sets the name on first creation.
+- Confirmed locally: the current `handle_new_user` aborts a same-email sign-up with
+  `duplicate key value violates unique constraint "profiles_email_key"`.
+
 ---
 ## Proposed Phase 1 sequence (each step = its own branch/PR, preview-verified, merged only on approval)
 0. **Reconcile** (blocked on owner answers §E): add migration-002 SQL to repo, review

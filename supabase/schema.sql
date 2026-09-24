@@ -191,7 +191,7 @@ begin
   insert into public.profiles (id, email, display_name)
   values (new.id, new.email,
           coalesce(new.raw_user_meta_data->>'full_name', split_part(new.email, '@', 1)))
-  on conflict (id) do nothing;
+  on conflict do nothing; -- id OR email; reconcile_profile() fixes drift on login
   return new;
 end;
 $$;
@@ -265,6 +265,78 @@ begin
   return new_plays;
 end;
 $$;
+
+-- (Added by migration-002-profile-reconcile.sql — see that file for the why.)
+-- Reconcile the caller's profile. Signature matches the client call:
+--    rpc('reconcile_profile', { p_id, p_email, p_display, p_color }).
+create or replace function public.reconcile_profile(
+  p_id uuid, p_email text, p_display text default null, p_color text default null)
+returns void language plpgsql security definer set search_path = public
+as $$
+declare
+  me       uuid := (select auth.uid());
+  my_email text;
+  old      public.profiles%rowtype;
+begin
+  if me is null then
+    raise exception 'Not signed in.';
+  end if;
+  if p_id is distinct from me then
+    raise exception 'Profile id does not match the signed-in user.';
+  end if;
+
+  -- Trust the auth record, not the client, for the email.
+  select u.email into my_email from auth.users u where u.id = me;
+
+  if my_email is not null then
+    select * into old from profiles
+     where lower(email) = lower(my_email) and id <> me
+     limit 1;
+  end if;
+
+  if old.id is not null then
+    -- Id drift: free the email, carry the old identity over to the new id.
+    update profiles set email = null where id = old.id;
+
+    insert into profiles (id, email, display_name, instrument, color, created_at)
+    values (me, my_email, old.display_name, old.instrument, old.color, old.created_at)
+    on conflict (id) do update
+      set email        = excluded.email,
+          display_name = excluded.display_name,
+          instrument   = excluded.instrument,
+          color        = excluded.color,
+          created_at   = excluded.created_at;
+
+    update boards      set owner_id = me where owner_id = old.id;
+    update memberships set user_id  = me where user_id  = old.id;
+    update comments    set user_id  = me where user_id  = old.id;
+
+    -- practice is unique per (song, user): merge rows both ids have, move the rest.
+    update practice n
+       set plays      = n.plays + o.plays,
+           confidence = coalesce(n.confidence, o.confidence),
+           updated_at = greatest(n.updated_at, o.updated_at)
+      from practice o
+     where o.user_id = old.id and n.user_id = me and n.song_id = o.song_id;
+    delete from practice o
+     where o.user_id = old.id
+       and exists (select 1 from practice n where n.user_id = me and n.song_id = o.song_id);
+    update practice set user_id = me where user_id = old.id;
+
+    delete from profiles where id = old.id;
+  end if;
+
+  -- Normal path: create the profile if missing; keep an edited stage name.
+  insert into profiles (id, email, display_name, color)
+  values (me, my_email,
+          coalesce(nullif(trim(p_display), ''), split_part(coalesce(my_email, ''), '@', 1)),
+          coalesce(p_color, '#3ec6c0'))
+  on conflict (id) do update set email = excluded.email;
+end;
+$$;
+
+revoke all on function public.reconcile_profile(uuid, text, text, text) from public, anon;
+grant execute on function public.reconcile_profile(uuid, text, text, text) to authenticated;
 
 grant execute on function public.claim_invites()                  to authenticated;
 grant execute on function public.invite_member(uuid, text, text)  to authenticated;

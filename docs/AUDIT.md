@@ -103,22 +103,43 @@ and whether `reconcile_profile` exists in the live DB. **Owner questions listed 
 ### Answers so far (2026-09-24)
 1. Prod Source is `eb5fcb9` on `main` → Vercel Git integration. **Confirmed: prod runs
    the old `src/` code.**
-2. A read-only `pg_proc` query for `reconcile_profile` / `handle_new_user` on the live
-   DB returned **no rows** → the original migration-002 was never applied (and its SQL
-   is lost). A new `supabase/migration-002-profile-reconcile.sql` has been written from
-   scratch and tested on a local Postgres with Supabase's `auth` stubbed (see PR).
-   Why `handle_new_user` also didn't appear is still unexplained → owner runs a
-   function/trigger inventory before applying.
+2. **Corrected via the Supabase connector:** the original migration-002 *had* been
+   applied to the live DB (an earlier manual query that returned "no rows" was
+   misleading). Its live version:
+   - `handle_new_user` already swallowed the email `unique_violation`, so sign-up was
+     no longer failing. §B.1 was already fixed in prod.
+   - 🔴 **`reconcile_profile` was exploitable.** It trusted the client's `p_id`/`p_email`
+     and was executable by `anon`. Anyone holding the public anon key could move any
+     user's boards, memberships, ratings and comments to another account and delete
+     the victim's profile. A read-only integrity check (9 auth users = 9 profiles, no
+     null emails, no membership/owner mismatches) showed **no sign of abuse**.
+   - **Fixed 2026-09-24:** `supabase/migration-002-profile-reconcile.sql` (this PR)
+     was applied to live, with the owner's explicit OK, as Supabase migration
+     `migration_002_profile_reconcile_secure`. Verified afterwards: `anon` can no longer
+     execute it, it is bound to `auth.uid()`, the trigger is present, and the
+     profile/user counts are unchanged. The live app never called `reconcile_profile`,
+     so users saw no change.
 3. `VITE_SUPABASE_ANON_KEY` already shows "Production and Preview" in Vercel.
-   Supabase Redirect URL for previews still to do.
+   Supabase Redirect URL for previews still to do:
+   `https://jammeet-*-two-minutes-away.vercel.app/**`.
+   Two **Netlify** sites (`peppy-donut-c84123`, `glowing-tarsier-c8030a`) also build
+   this repo. The band only uses `jammeet.vercel.app`, so the owner will delete them.
 4. Moving to branches + PRs (owner reviews on preview, merges on GitHub).
 
 ### Found while writing migration-002
 - **Stage names reset on every page load.** `ensureProfile` upserts
   `display_name` from Google on each load, overwriting whatever the user saved in
   the profile popover. `reconcile_profile` only sets the name on first creation.
-- Confirmed locally: the current `handle_new_user` aborts a same-email sign-up with
-  `duplicate key value violates unique constraint "profiles_email_key"`.
+- Confirmed locally: `schema.sql`'s original `handle_new_user` aborts a same-email
+  sign-up with `duplicate key value violates unique constraint "profiles_email_key"`.
+
+### Supabase security advisor (2026-09-24, after the fix)
+- Every `SECURITY DEFINER` function is executable by `anon`/`authenticated`. This is
+  low risk: the trigger functions can't be called via RPC, the `is_*` helpers only
+  answer about the caller, and `claim_invites` / `invite_member` / `increment_play`
+  check `auth.uid()` internally. Suggested tidy-up (future migration-003, review
+  first): `revoke execute … from anon` on all of them, since the app is sign-in only.
+- "Leaked password protection disabled": not applicable (Google OAuth only).
 
 ---
 ## Proposed Phase 1 sequence (each step = its own branch/PR, preview-verified, merged only on approval)

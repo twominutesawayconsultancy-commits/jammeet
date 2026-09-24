@@ -43,9 +43,9 @@ supabase/schema.sql        tables, RLS, triggers, RPCs, storage bucket — idemp
 **Unreconciled copies at the repo root** — `App.jsx`, `api.js`, `cache.js`,
 `styles.css` — are newer versions (stem cache, rev-stamped uploads,
 `reconcile_profile` auth fix) that were uploaded to the wrong folder. **Vite does not
-build them.** The `reconcile_profile` SQL (migration-002) is not in the repo. Do not
-move root `api.js` into `src/` until that migration is reviewed and applied to the
-live DB, or every sign-in breaks. See `docs/AUDIT.md` §A–B.
+build them.** `supabase/migration-002-profile-reconcile.sql` (secure
+`reconcile_profile`) is applied to the live DB as of 2026-09-24, so the client may now
+call it. See `docs/AUDIT.md` §A–B and "Answers so far".
 
 ## Architecture
 - **Routing** is in-memory state in `App` (`{name:'home'|'board', boardId, songId}`);
@@ -86,8 +86,10 @@ live DB, or every sign-in breaks. See `docs/AUDIT.md` §A–B.
 - **One shared database, no staging.** Preview deploys and local dev hit the live
   Supabase project — clicking around on a preview writes real data. Google sign-in on
   previews may bounce to prod unless the preview domain is in Supabase Redirect URLs.
-- **Schema changes:** propose migration SQL for explicit review; never run it
-  yourself against live; never run destructive SQL on live data. Deploy order is
+- **Schema changes:** propose migration SQL for explicit review. Don't run it against
+  live yourself unless the owner explicitly OKs that specific migration in the session
+  (a Supabase connector may be attached; read-only queries are fine). Never run
+  destructive SQL on live data. Deploy order is
   always SQL first, then code that depends on it.
 - Verify with real builds/tests (`npm run build`, plus tests once they exist), not
   assumptions. Phase 1 refactors must be behaviour-preserving.

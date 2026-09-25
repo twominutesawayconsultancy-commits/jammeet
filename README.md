@@ -24,7 +24,7 @@ and are not interchangeable.**
 | Supabase **dashboard** URL | `https://supabase.com/dashboard/project/abcd1234` | Only in your browser, to configure things. Never goes in the app. |
 | Supabase **API** URL | `https://abcd1234.supabase.co` | Goes into the app as `VITE_SUPABASE_URL`, and into Google's OAuth settings. |
 | Vercel **dashboard** URL | `https://vercel.com/yourname/jam-meet` | Only in your browser, to configure things. |
-| Your **live app** URL | `https://jam-meet.vercel.app` | What you share with the band, and what goes into Supabase's URL Configuration. |
+| Your **live app** URL | `https://jammeet.vercel.app` | What you share with the band, and what goes into Supabase's URL Configuration. |
 
 If something asks for a URL and you're not sure which: dashboards contain
 `supabase.com/dashboard` or `vercel.com`; the app/API ones end in
@@ -90,10 +90,10 @@ the app shows nothing (or 403 errors), with no obvious error message.
 
 Supabase **dashboard** → **Authentication → URL Configuration**:
 
-- **Site URL**: your live app URL, e.g. `https://jam-meet.vercel.app`
+- **Site URL**: your live app URL, e.g. `https://jammeet.vercel.app`
   (no trailing slash).
 - **Redirect URLs** — add all of these, wildcards included:
-  - `https://jam-meet.vercel.app/**`
+  - `https://jammeet.vercel.app/**`
   - `http://localhost:5173/**` (so local dev works too)
 
 The `/**` wildcard matters: without it the OAuth redirect back into the app is
@@ -117,7 +117,7 @@ rejected and the session is dropped.
 
    (The `anon` key is safe to expose in a browser app — that's what row-level
    security is for. Never use the `service_role` key here.)
-4. Deploy. Copy your live URL (e.g. `https://jam-meet.vercel.app`) and go do
+4. Deploy. Copy your live URL (e.g. `https://jammeet.vercel.app`) and go do
    **Step 4** with it now.
 5. If you ever change env vars later: Vercel dashboard → your project →
    Settings → Environment Variables → edit → then **Deployments → Redeploy**
@@ -182,5 +182,7 @@ src/styles.css             dark studio/console design system
 src/supabaseClient.js      Supabase client from env vars
 src/lib/audio.js           Web Audio: demo-stem synth, mixer, meters, metronome
 src/lib/api.js             all database/storage calls
+src/lib/cache.js           stem cache: decoded audio in memory + raw bytes in IndexedDB
 supabase/schema.sql        tables, RLS, triggers, RPCs, storage — idempotent
+supabase/migration-*.sql   later changes to an existing database (already in schema.sql)
 ```

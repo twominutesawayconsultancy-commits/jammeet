@@ -76,6 +76,8 @@ and whether `reconcile_profile` exists in the live DB. **Owner questions listed 
 - **Memory cache** (root `cache.js`): keyed by stem id only (another admin's replace
   isn't seen until refresh) and unbounded — decoded PCM is ~10 MB/min/stem, so a few
   8-stem songs can OOM a phone tab. `Promise.all` downloads all WAVs concurrently.
+  ✅ *Fixed when the cache shipped in `src/lib/cache.js`: keyed by stem id + path,
+  256 MB LRU cap.* (Concurrent downloads remain.)
 - **Loop/pass detection runs in `requestAnimationFrame`**: in a background tab (e.g.
   musician switches to a chord chart) rAF pauses → loop doesn't restart, pass isn't
   counted until they return. Seeking to the end also counts a "pass".

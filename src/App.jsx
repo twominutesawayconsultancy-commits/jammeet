@@ -5,6 +5,7 @@ import * as api from './lib/api'
 import {
   Mixer, synthDemoStems, decodeAudio, formatTime, DEMO_TRACK_NAMES,
 } from './lib/audio'
+import * as cache from './lib/cache'
 import {
   Play, Pause, Square, Repeat, Plus, X, Trash2, Users, LogOut, Upload,
   ChevronLeft, Crown, Shield, MessageSquare, Music2, FolderOpen, Pencil,
@@ -320,6 +321,12 @@ function ProfilePopover({ profile, onSaved, onClose, notify }) {
   const [name, setName] = useState(profile.display_name || '')
   const [instrument, setInstrument] = useState(profile.instrument || '')
   const [saving, setSaving] = useState(false)
+  const [cacheMb, setCacheMb] = useState(null)
+  useEffect(() => {
+    let alive = true
+    cache.cacheSize().then((b) => { if (alive) setCacheMb(Math.round((b / 1048576) * 10) / 10) })
+    return () => { alive = false }
+  }, [])
   return (
     <div className="popover" role="dialog" aria-label="Your profile">
       <label className="field">
@@ -357,6 +364,22 @@ function ProfilePopover({ profile, onSaved, onClose, notify }) {
         </button>
         <button className="btn btn-ghost" onClick={() => api.signOut()}>
           <LogOut size={14} /> Sign out
+        </button>
+      </div>
+      <div className="cache-row">
+        <span className="dim tiny">
+          Stems saved on this device: <strong>{cacheMb === null ? '…' : `${cacheMb} MB`}</strong>
+          <br />Saved songs skip the download next time.
+        </span>
+        <button
+          className="btn btn-ghost btn-sm"
+          onClick={async () => {
+            await cache.clearAll()
+            setCacheMb(0)
+            notify('Cached audio cleared. Songs will re-download once.')
+          }}
+        >
+          <Trash2 size={13} /> Clear
         </button>
       </div>
       <button className="popover-close" onClick={onClose} aria-label="Close"><X size={14} /></button>
@@ -1016,18 +1039,64 @@ function SongView({ boardId, song, members, myRole, profile, refresh, onBack, no
       try {
         setLoadState('loading')
         const demoStems = song.stems.filter((s) => s.source === 'demo' || !s.storage_path)
-        setLoadMsg(demoStems.length ? 'Synthesizing demo loops…' : 'Downloading stems…')
+        const realStems = song.stems.filter((s) => !(s.source === 'demo' || !s.storage_path))
+
+        // Memory holds only the most recently opened song: drop any other song's
+        // decoded audio before decoding this one, so a phone never holds two.
+        cache.retainOnly(realStems.map((s) => [s.id, s.storage_path]))
+
+        // Anything already decoded in memory is free — reopening a song you
+        // just closed should be instant.
+        const inMemory = new Map()
+        for (const s of realStems) {
+          const b = cache.getMemory(s.id, s.storage_path)
+          if (b) inMemory.set(s.id, b)
+        }
+        const needed = realStems.filter((s) => !inMemory.has(s.id))
+
+        // Say whether we're downloading or just reading what this device saved.
+        const onDevice = await Promise.all(needed.map((s) => cache.hasStored(s.id, s.storage_path)))
+        const toDownload = onDevice.filter((x) => !x).length
+        const label = toDownload
+          ? `Downloading ${toDownload} stem${toDownload === 1 ? '' : 's'}`
+          : 'Loading stems saved on this device'
+        if (!cancelled) {
+          setLoadMsg(
+            demoStems.length ? 'Synthesizing demo loops…'
+              : needed.length ? `${label}…` : 'Ready'
+          )
+        }
+
         const demoBufs = await synthDemoStems(demoStems, song)
+
+        // Fetch every remaining stem at once rather than one after another.
+        let done = 0
+        const total = needed.length
+        const tick = () => {
+          done += 1
+          if (!cancelled && total) setLoadMsg(`${label}… ${done}/${total}`)
+        }
+        const fetched = new Map()
+        await Promise.all(
+          needed.map(async (s) => {
+            let bytes = await cache.getStored(s.id, s.storage_path)
+            if (!bytes) {
+              const ab = await api.fetchStemArrayBuffer(s.storage_path)
+              bytes = ab
+              cache.putStored(s.id, s.storage_path, ab) // decodeAudio copies internally, so ab stays intact
+            }
+            const buffer = await decodeAudio(bytes)
+            cache.putMemory(s.id, s.storage_path, buffer)
+            fetched.set(s.id, buffer)
+            tick()
+          })
+        )
+
+        if (cancelled) return
         const defs = []
         for (const s of song.stems) {
-          if (cancelled) return
-          let buffer
-          if (demoBufs.has(s.id)) buffer = demoBufs.get(s.id)
-          else {
-            setLoadMsg(`Downloading ${s.name}…`)
-            const ab = await api.fetchStemArrayBuffer(s.storage_path)
-            buffer = await decodeAudio(ab)
-          }
+          const buffer = demoBufs.get(s.id) || inMemory.get(s.id) || fetched.get(s.id)
+          if (!buffer) continue
           defs.push({ id: s.id, name: s.name, buffer, gain: s.gain ?? 1 })
         }
         if (cancelled) return
@@ -1397,6 +1466,7 @@ function EditTracksModal({ boardId, song, onClose, refresh, notify }) {
     setBusyId(stem.id)
     try {
       if (stem.storage_path) await supabase.storage.from('stems').remove([stem.storage_path])
+      cache.dropMemory(stem.id) // this device is holding the old decode
       await api.uploadStemFile(boardId, song.id, stem.id, file)
       refresh()
     } catch (e) { notify(e.message) } finally { setBusyId(null) }

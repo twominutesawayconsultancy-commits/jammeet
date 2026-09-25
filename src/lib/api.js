@@ -195,7 +195,11 @@ function extOf(filename) {
 
 /** Upload a stem's audio and stamp storage_path on the row. */
 export async function uploadStemFile(boardId, songId, stemId, file) {
-  const path = `${boardId}/${songId}/${stemId}.${extOf(file.name)}`
+  // The revision suffix means replacing a stem always produces a NEW path.
+  // Devices cache stems by path, so every member picks up replaced audio
+  // automatically instead of playing a stale cached copy.
+  const rev = Date.now().toString(36)
+  const path = `${boardId}/${songId}/${stemId}-${rev}.${extOf(file.name)}`
   const { error } = await supabase.storage.from('stems').upload(path, file, {
     upsert: true,
     contentType: file.type || 'application/octet-stream',

@@ -639,3 +639,16 @@ select { cursor: pointer; }
 }
 .cache-row strong { color: var(--teal); font-family: var(--font-mono); font-weight: 500; }
 .btn.btn-sm { padding: 5px 9px; font-size: 11px; }
+
+/* --- inline note editing --- */
+.comment-edit { display: flex; gap: 6px; align-items: center; margin-top: 4px; }
+.comment-edit input { flex: 1; }
+
+/* --- instrument picker in the profile popover --- */
+.chip-picker { display: flex; flex-wrap: wrap; gap: 6px; }
+.pick-chip {
+  border: 1px solid var(--line); background: #10151b; color: var(--dim);
+  border-radius: 999px; padding: 4px 10px; font-size: 12px; cursor: pointer;
+}
+.pick-chip:hover { border-color: var(--teal); color: var(--ink); }
+.pick-chip.on { background: var(--teal); border-color: var(--teal); color: #06211f; font-weight: 600; }

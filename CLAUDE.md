@@ -4,7 +4,8 @@ Jam-Meet ("Jammit On") is an async band-rehearsal web app. One board per band; t
 owner uploads multitrack stems per song; each member opens a song, mutes their own
 instrument, plays along, and after 3 full passes rates confidence 1–10. Songs sort
 into lanes by band-average rating: Unrehearsed → Woodshedding (<4) → Tightening up
-(4–<7) → Show-ready (≥7).
+(4–<7) → Show-ready (≥7). The band average is over every joined member —
+not-yet-rated counts as 0 (`songReadiness(song, members)`).
 
 > ⚠️ **This app is LIVE with real users.** Protecting the running app beats every
 > other goal. See Guardrails.

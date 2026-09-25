@@ -587,6 +587,7 @@ select { cursor: pointer; }
   font-family: var(--font-display); font-weight: 600;
 }
 .band-avg .mono { color: var(--teal); font-size: 15px; }
+.band-avg-note { margin: 4px 0 0; text-align: right; }
 
 /* comments */
 .comments { display: flex; flex-direction: column; gap: 12px; max-height: 320px; overflow-y: auto; margin-bottom: 12px; }

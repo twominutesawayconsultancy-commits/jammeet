@@ -26,12 +26,18 @@ const LANES = [
   { id: 'showready', label: 'Show-ready', hint: 'avg 7 and up', tone: 'green' },
 ]
 
-function songReadiness(song) {
-  const ratings = (song.practice || []).filter((p) => p.confidence != null)
-  if (ratings.length === 0) return { lane: 'unrehearsed', avg: null, count: 0 }
-  const avg = ratings.reduce((s, p) => s + p.confidence, 0) / ratings.length
+/**
+ * Band readiness = average over EVERY joined member; anyone who hasn't rated
+ * yet counts as 0, so one bandmate's 8 can't make the whole song look ready.
+ */
+function songReadiness(song, members) {
+  const joined = new Set(members.filter((m) => m.user_id).map((m) => m.user_id))
+  const ratings = (song.practice || []).filter((p) => p.confidence != null && joined.has(p.user_id))
+  const total = joined.size
+  if (ratings.length === 0) return { lane: 'unrehearsed', avg: null, count: 0, total }
+  const avg = ratings.reduce((s, p) => s + p.confidence, 0) / Math.max(total, 1)
   const lane = avg < 4 ? 'woodshedding' : avg < 7 ? 'tightening' : 'showready'
-  return { lane, avg, count: ratings.length }
+  return { lane, avg, count: ratings.length, total }
 }
 
 /** Pass counts at which we ask "how confident are you now?": 3, 6, 9, 15, 20, 25… */
@@ -577,7 +583,7 @@ function BoardView({ boardId, songId, profile, notify, onBack, onOpenSong, onClo
 
   const byLane = Object.fromEntries(LANES.map((l) => [l.id, []]))
   songs.forEach((s) => {
-    const r = songReadiness(s)
+    const r = songReadiness(s, members)
     byLane[r.lane].push({ song: s, r })
   })
   Object.values(byLane).forEach((arr) =>
@@ -1184,7 +1190,7 @@ function SongView({ boardId, song, members, myRole, profile, refresh, onBack, no
   }
 
   const claimed = members.filter((m) => m.user_id)
-  const readiness = songReadiness(song)
+  const readiness = songReadiness(song, members)
   const laneMeta = LANES.find((l) => l.id === readiness.lane)
 
   return (
@@ -1466,6 +1472,9 @@ function PracticePanel({ plays, myRating, claimed, song, readiness, onRate, isOw
         <span>Band average</span>
         <span className="mono">{readiness.avg == null ? '—' : `${readiness.avg.toFixed(1)} / 10`}</span>
       </div>
+      <p className="dim tiny band-avg-note">
+        {readiness.count} of {readiness.total} rated · not-yet-rated counts as 0
+      </p>
     </div>
   )
 }

@@ -43,6 +43,7 @@ src/lib/cache.js           stem cache (memory LRU + IndexedDB)
 supabase/schema.sql        tables, RLS, triggers, RPCs, storage bucket — idempotent
 supabase/migration-002-profile-reconcile.sql   secure reconcile_profile (live since 2026-09-24)
 supabase/migration-003-owner-rating.sql        practice.rated_by + rate_for_member (owner rates for a member)
+supabase/migration-004-admin-edits.sql         admins edit boards; owner/admins moderate + edit notes (edit_comment)
 docs/AUDIT.md              technical audit + owner answers
 ```
 
@@ -56,6 +57,8 @@ docs/AUDIT.md              technical audit + owner answers
 - **Security model is RLS**, not key secrecy (anon key is public by design). Helpers
   `is_member`, `is_admin`, `is_owner`, `song_board` are `SECURITY DEFINER` to avoid
   policy recursion. Roles: owner / admin (max 2, trigger-enforced) / member.
+  Owner + admins: edit board (name/tagline/accent), songs (title/key/sig/BPM), stems,
+  and any note (edit via `edit_comment`, delete). Owner only: delete board/songs, invite.
   Owner membership is created by the `handle_new_board` trigger; profiles by
   `handle_new_user` (plus client `ensureProfile`). Invites are `memberships` rows with
   null `user_id`, claimed by `claim_invites()` on login.
@@ -73,6 +76,9 @@ docs/AUDIT.md              technical audit + owner answers
   prompt asks for a rating at 3, 6, 9, 15, then every 5 passes (`isRatingMilestone`).
   The board owner can rate for a member via `rate_for_member` (migration-003);
   `practice.rated_by` records who set the score (owner-set → "owner" tag).
+- **Instruments:** `profiles.instrument` holds a comma-separated pick from `INSTRUMENTS`
+  plus any typed via "Other…"
+  (App.jsx); unknown legacy values are kept and shown as extra chips.
 - **Stem cache** (`src/lib/cache.js`): decoded AudioBuffers in memory for the most
   recently opened song only (`retainOnly` at load start; decoded audio is ~10 MB per
   stereo minute per stem, so never byte-cap below one song) + raw bytes in IndexedDB

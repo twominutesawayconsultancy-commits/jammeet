@@ -91,9 +91,11 @@ create table if not exists public.comments (
   song_id    uuid not null references public.songs(id) on delete cascade,
   user_id    uuid not null references public.profiles(id) on delete cascade,
   body       text not null,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  edited_at  timestamptz
 );
 
+alter table public.comments add column if not exists edited_at timestamptz;
 alter table public.practice add column if not exists rated_by uuid references public.profiles(id) on delete set null;
 
 create index if not exists idx_memberships_board on public.memberships(board_id);
@@ -370,6 +372,31 @@ $$;
 revoke all on function public.rate_for_member(uuid, uuid, integer) from public, anon;
 grant execute on function public.rate_for_member(uuid, uuid, integer) to authenticated;
 
+-- Edit a note: author, owner or admin (added by migration-004-admin-edits.sql).
+create or replace function public.edit_comment(p_id uuid, p_body text)
+returns void language plpgsql security definer set search_path = public
+as $$
+declare
+  c record;
+begin
+  select id, user_id, song_id into c from comments where id = p_id;
+  if c.id is null then
+    raise exception 'That note no longer exists.';
+  end if;
+  if c.user_id is distinct from (select auth.uid())
+     and not public.is_admin(public.song_board(c.song_id)) then
+    raise exception 'Only the author, the owner or an admin can edit this note.';
+  end if;
+  if p_body is null or length(trim(p_body)) = 0 then
+    raise exception 'A note can''t be empty.';
+  end if;
+  update comments set body = trim(p_body), edited_at = now() where id = p_id;
+end;
+$$;
+
+revoke all on function public.edit_comment(uuid, text) from public, anon;
+grant execute on function public.edit_comment(uuid, text) to authenticated;
+
 grant execute on function public.claim_invites()                  to authenticated;
 grant execute on function public.invite_member(uuid, text, text)  to authenticated;
 grant execute on function public.increment_play(uuid)             to authenticated;
@@ -414,7 +441,7 @@ create policy "boards insert" on public.boards
 drop policy if exists "boards update" on public.boards;
 create policy "boards update" on public.boards
   for update to authenticated
-  using (public.is_owner(id)) with check (public.is_owner(id));
+  using (public.is_admin(id)) with check (public.is_admin(id)); -- owner + admins (migration-004)
 
 drop policy if exists "boards delete" on public.boards;
 create policy "boards delete" on public.boards
@@ -518,7 +545,7 @@ drop policy if exists "comments delete" on public.comments;
 create policy "comments delete" on public.comments
   for delete to authenticated
   using (user_id = (select auth.uid())
-         or public.is_owner(public.song_board(song_id)));
+         or public.is_admin(public.song_board(song_id))); -- owner + admins (migration-004)
 
 -- ============================================================================
 -- 6. STORAGE — private `stems` bucket, path <boardId>/<songId>/<stemId>.<ext>

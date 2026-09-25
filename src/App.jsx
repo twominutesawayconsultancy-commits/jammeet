@@ -18,6 +18,13 @@ import {
 
 const KEY_ROOTS = ['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B']
 const SIGS = ['4/4', '3/4', '6/8', '2/4', '5/4', '7/8']
+const INSTRUMENTS = [
+  'Guitar', 'Acoustic guitar', 'Electric guitar', 'Lead guitar', 'Rhythm guitar',
+  'Bass', 'Drums', 'Percussion', 'Keyboards 1', 'Keyboards 2', 'Piano', 'Vocals',
+]
+/** profiles.instrument is stored as "Vocals, Rhythm guitar". */
+const parseInstruments = (str) => [...new Set((str || '').split(',').map((x) => x.trim()).filter(Boolean)
+  .map((x) => INSTRUMENTS.find((i) => i.toLowerCase() === x.toLowerCase()) || x))]
 
 const LANES = [
   { id: 'unrehearsed', label: 'Unrehearsed', hint: 'no ratings yet', tone: 'slate' },
@@ -333,7 +340,24 @@ function Header({ profile, onHome, notify, onProfileSaved }) {
 
 function ProfilePopover({ profile, onSaved, onClose, notify }) {
   const [name, setName] = useState(profile.display_name || '')
-  const [instrument, setInstrument] = useState(profile.instrument || '')
+  const [instruments, setInstruments] = useState(parseInstruments(profile.instrument))
+  // Instruments not on the standard list (typed via "Other…", or older free text)
+  // stay visible as their own chips so saving never silently drops them.
+  const [extras, setExtras] = useState(() => instruments.filter((x) => !INSTRUMENTS.includes(x)))
+  const [otherOpen, setOtherOpen] = useState(false)
+  const [otherText, setOtherText] = useState('')
+  const choices = [...INSTRUMENTS, ...extras]
+  const toggle = (x) => setInstruments((cur) =>
+    cur.includes(x) ? cur.filter((y) => y !== x) : choices.filter((y) => y === x || cur.includes(y)))
+  const addOther = () => {
+    const typed = otherText.replace(/,/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 30)
+    if (!typed) return
+    const match = choices.find((c) => c.toLowerCase() === typed.toLowerCase())
+    const name = match || typed.charAt(0).toUpperCase() + typed.slice(1)
+    if (!match) setExtras((e) => [...e, name])
+    setInstruments((cur) => (cur.includes(name) ? cur : [...cur, name]))
+    setOtherText(''); setOtherOpen(false)
+  }
   const [saving, setSaving] = useState(false)
   const [cacheMb, setCacheMb] = useState(null)
   useEffect(() => {
@@ -347,14 +371,41 @@ function ProfilePopover({ profile, onSaved, onClose, notify }) {
         <span>Stage name</span>
         <input value={name} onChange={(e) => setName(e.target.value)} />
       </label>
-      <label className="field">
-        <span>Instrument</span>
-        <input
-          value={instrument}
-          placeholder="drums, bass, keys…"
-          onChange={(e) => setInstrument(e.target.value)}
-        />
-      </label>
+      <div className="field">
+        <span>What you play (pick any)</span>
+        <div className="chip-picker" role="group" aria-label="Instruments">
+          {choices.map((x) => (
+            <button key={x} type="button" aria-pressed={instruments.includes(x)}
+              className={`pick-chip ${instruments.includes(x) ? 'on' : ''}`} onClick={() => toggle(x)}>
+              {x}
+            </button>
+          ))}
+          {!otherOpen && (
+            <button type="button" className="pick-chip pick-chip-other" onClick={() => setOtherOpen(true)}>
+              <Plus size={11} /> Other…
+            </button>
+          )}
+        </div>
+        {otherOpen && (
+          <div className="row gap other-row">
+            <input
+              autoFocus
+              value={otherText}
+              maxLength={30}
+              placeholder="e.g. Saxophone, Violin, Flute"
+              aria-label="Other instrument"
+              onChange={(e) => setOtherText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') addOther()
+                if (e.key === 'Escape') { setOtherOpen(false); setOtherText('') }
+              }}
+            />
+            <button type="button" className="btn btn-ghost btn-sm" disabled={!otherText.trim()} onClick={addOther}>
+              <Plus size={12} /> Add
+            </button>
+          </div>
+        )}
+      </div>
       <p className="dim tiny">
         Your instrument is shown to bandmates so everyone knows which stem is
         "yours" to mute.
@@ -368,7 +419,7 @@ function ProfilePopover({ profile, onSaved, onClose, notify }) {
             try {
               const p = await api.updateProfile(profile.id, {
                 display_name: name.trim(),
-                instrument: instrument.trim() || null,
+                instrument: instruments.join(', ') || null,
               })
               onSaved(p)
             } catch (e) { notify(e.message) } finally { setSaving(false) }
@@ -534,6 +585,117 @@ function NewBoardModal({ onClose, onCreated, notify }) {
   )
 }
 
+/** Owner or admin: fix the board's name, tagline or colour. */
+function EditBoardModal({ board, onClose, onSaved, notify }) {
+  const [name, setName] = useState(board.name || '')
+  const [tagline, setTagline] = useState(board.tagline || '')
+  const [accent, setAccent] = useState(board.accent || ACCENTS[0])
+  const [busy, setBusy] = useState(false)
+  return (
+    <Modal title="Edit board" onClose={onClose}>
+      <label className="field">
+        <span>Band / project name</span>
+        <input autoFocus value={name} onChange={(e) => setName(e.target.value)} />
+      </label>
+      <label className="field">
+        <span>Tagline (optional)</span>
+        <input value={tagline} onChange={(e) => setTagline(e.target.value)} />
+      </label>
+      <div className="field">
+        <span>Accent</span>
+        <div className="swatches">
+          {[...new Set([...ACCENTS, accent])].map((c) => (
+            <button key={c} className={`swatch ${accent === c ? 'on' : ''}`} style={{ '--c': c }}
+              onClick={() => setAccent(c)} aria-label={`accent ${c}`} />
+          ))}
+        </div>
+      </div>
+      <div className="modal-actions">
+        <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+        <button
+          className="btn btn-primary"
+          disabled={busy || !name.trim()}
+          onClick={async () => {
+            setBusy(true)
+            try {
+              await api.updateBoard(board.id, { name: name.trim(), tagline: tagline.trim() || null, accent })
+              onSaved()
+            } catch (e) { notify(e.message); setBusy(false) }
+          }}
+        >
+          <Check size={14} /> Save
+        </button>
+      </div>
+    </Modal>
+  )
+}
+
+/** Owner or admin: fix a song's title, key, time signature or tempo. */
+function EditSongModal({ song, onClose, onSaved, notify }) {
+  const [keyRoot, keyScale] = String(song.key || 'C major').split(/\s+/)
+  const [title, setTitle] = useState(song.title || '')
+  const [root, setRoot] = useState(KEY_ROOTS.includes(keyRoot) ? keyRoot : 'C')
+  const [scale, setScale] = useState(keyScale === 'minor' ? 'minor' : 'major')
+  const [sig, setSig] = useState(song.sig || '4/4')
+  const [bpm, setBpm] = useState(song.bpm || 100)
+  const [busy, setBusy] = useState(false)
+  return (
+    <Modal title="Edit song" onClose={onClose}>
+      <div className="grid-2">
+        <label className="field span-2">
+          <span>Title</span>
+          <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} />
+        </label>
+        <div className="field">
+          <span>Key</span>
+          <div className="row gap">
+            <select value={root} onChange={(e) => setRoot(e.target.value)}>
+              {KEY_ROOTS.map((k) => <option key={k}>{k}</option>)}
+            </select>
+            <select value={scale} onChange={(e) => setScale(e.target.value)}>
+              <option value="major">major</option>
+              <option value="minor">minor</option>
+            </select>
+          </div>
+        </div>
+        <div className="field">
+          <span>Time / tempo</span>
+          <div className="row gap">
+            <select value={sig} onChange={(e) => setSig(e.target.value)}>
+              {[...new Set([...SIGS, sig])].map((x) => <option key={x}>{x}</option>)}
+            </select>
+            <input className="bpm-input mono" type="number" min="30" max="300" value={bpm}
+              onChange={(e) => setBpm(e.target.value)} aria-label="BPM" />
+            <span className="dim self-center">BPM</span>
+          </div>
+        </div>
+      </div>
+      <p className="dim tiny">Key and BPM drive the demo loops and the metronome.</p>
+      <div className="modal-actions">
+        <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+        <button
+          className="btn btn-primary"
+          disabled={busy || !title.trim()}
+          onClick={async () => {
+            setBusy(true)
+            try {
+              await api.updateSong(song.id, {
+                title: title.trim(),
+                key: `${root} ${scale}`,
+                sig,
+                bpm: Math.max(30, Math.min(300, Number(bpm) || 100)),
+              })
+              onSaved()
+            } catch (e) { notify(e.message); setBusy(false) }
+          }}
+        >
+          <Check size={14} /> Save
+        </button>
+      </div>
+    </Modal>
+  )
+}
+
 /* ================================================================== */
 /* Board view — readiness lanes                                        */
 /* ================================================================== */
@@ -542,6 +704,7 @@ function BoardView({ boardId, songId, profile, notify, onBack, onOpenSong, onClo
   const [bundle, setBundle] = useState(null)
   const [showNewSong, setShowNewSong] = useState(false)
   const [showMembers, setShowMembers] = useState(false)
+  const [showEditBoard, setShowEditBoard] = useState(false)
 
   const refresh = useCallback(() => {
     api.fetchBoardBundle(boardId).then(setBundle).catch((e) => notify(e.message))
@@ -615,6 +778,11 @@ function BoardView({ boardId, songId, profile, notify, onBack, onOpenSong, onClo
             <Users size={15} /> Members
           </button>
           {canAdmin && (
+            <button className="btn btn-ghost" onClick={() => setShowEditBoard(true)} title="Edit board name, tagline, colour">
+              <Pencil size={14} /> Edit board
+            </button>
+          )}
+          {canAdmin && (
             <button className="btn btn-primary" onClick={() => setShowNewSong(true)}>
               <Plus size={15} /> Add song
             </button>
@@ -657,6 +825,14 @@ function BoardView({ boardId, songId, profile, notify, onBack, onOpenSong, onClo
           boardId={boardId}
           onClose={() => setShowNewSong(false)}
           onCreated={(newSongId) => { setShowNewSong(false); refresh(); onOpenSong(newSongId) }}
+          notify={notify}
+        />
+      )}
+      {showEditBoard && (
+        <EditBoardModal
+          board={board}
+          onClose={() => setShowEditBoard(false)}
+          onSaved={() => { setShowEditBoard(false); refresh() }}
           notify={notify}
         />
       )}
@@ -1025,6 +1201,7 @@ function SongView({ boardId, song, members, myRole, profile, refresh, onBack, no
   const [trackUi, setTrackUi] = useState({}) // id -> {gain, muted, solo}
   const [duration, setDuration] = useState(0)
   const [showEdit, setShowEdit] = useState(false)
+  const [showEditSong, setShowEditSong] = useState(false)
 
   const myPractice = (song.practice || []).find((p) => p.user_id === profile.id)
   const [plays, setPlays] = useState(myPractice?.plays ?? 0)
@@ -1140,7 +1317,7 @@ function SongView({ boardId, song, members, myRole, profile, refresh, onBack, no
     })()
 
     return () => { cancelled = true; mixer.dispose(); mixerRef.current = null }
-  }, [stemsSig, song.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [stemsSig, song.id, song.key, song.sig, song.bpm]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // rAF loop: transport, timecode, progress, VU meters (direct DOM for 60fps).
   useEffect(() => {
@@ -1205,9 +1382,14 @@ function SongView({ boardId, song, members, myRole, profile, refresh, onBack, no
           </div>
         </div>
         {canAdmin && (
-          <button className="btn btn-ghost" onClick={() => setShowEdit(true)}>
-            <Pencil size={14} /> Edit tracks
-          </button>
+          <div className="row gap">
+            <button className="btn btn-ghost" onClick={() => setShowEditSong(true)}>
+              <Pencil size={14} /> Edit song
+            </button>
+            <button className="btn btn-ghost" onClick={() => setShowEdit(true)}>
+              <SlidersHorizontal size={14} /> Edit tracks
+            </button>
+          </div>
         )}
       </div>
 
@@ -1349,6 +1531,15 @@ function SongView({ boardId, song, members, myRole, profile, refresh, onBack, no
         />
       )}
 
+      {showEditSong && (
+        <EditSongModal
+          song={song}
+          onClose={() => setShowEditSong(false)}
+          onSaved={() => { setShowEditSong(false); refresh() }}
+          notify={notify}
+        />
+      )}
+
       {showEdit && (
         <EditTracksModal
           boardId={boardId}
@@ -1485,6 +1676,8 @@ function CommentsPanel({ song, profile, myRole, notify, onChanged }) {
   const [comments, setComments] = useState(null)
   const [body, setBody] = useState('')
   const [busy, setBusy] = useState(false)
+  const [editing, setEditing] = useState(null) // { id, body }
+  const canModerate = myRole === 'owner' || myRole === 'admin'
 
   const load = useCallback(() => {
     api.fetchComments(song.id).then(setComments).catch((e) => notify(e.message))
@@ -1517,16 +1710,50 @@ function CommentsPanel({ song, profile, myRole, notify, onChanged }) {
               <div className="comment-head">
                 <strong>{c.profiles?.display_name || 'Someone'}</strong>
                 <span className="dim tiny">{new Date(c.created_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
-                {(c.user_id === profile.id || myRole === 'owner') && (
-                  <button className="icon-btn danger tiny-btn" title="Delete note"
-                    onClick={async () => {
-                      try { await api.deleteComment(c.id); load(); onChanged() } catch (e) { notify(e.message) }
-                    }}>
-                    <X size={11} />
-                  </button>
+                {c.edited_at && <span className="dim tiny">(edited)</span>}
+                {(c.user_id === profile.id || canModerate) && editing?.id !== c.id && (
+                  <>
+                    <button className="icon-btn tiny-btn" title="Edit note"
+                      onClick={() => setEditing({ id: c.id, body: c.body })}>
+                      <Pencil size={11} />
+                    </button>
+                    <button className="icon-btn danger tiny-btn" title="Delete note"
+                      onClick={async () => {
+                        if (c.user_id !== profile.id && !window.confirm(`Delete ${c.profiles?.display_name || 'this'}'s note?`)) return
+                        try { await api.deleteComment(c.id); load(); onChanged() } catch (e) { notify(e.message) }
+                      }}>
+                      <X size={11} />
+                    </button>
+                  </>
                 )}
               </div>
-              <p>{c.body}</p>
+              {editing?.id === c.id ? (
+                <div className="comment-edit">
+                  <input
+                    autoFocus
+                    value={editing.body}
+                    aria-label="Edit note"
+                    onChange={(e) => setEditing({ ...editing, body: e.target.value })}
+                    onKeyDown={async (e) => {
+                      if (e.key === 'Escape') setEditing(null)
+                      if (e.key === 'Enter' && editing.body.trim()) {
+                        try { await api.editComment(c.id, editing.body.trim()); setEditing(null); load() }
+                        catch (err) { notify(err.message) }
+                      }
+                    }}
+                  />
+                  <button className="icon-btn" title="Save" disabled={!editing.body.trim()}
+                    onClick={async () => {
+                      try { await api.editComment(c.id, editing.body.trim()); setEditing(null); load() }
+                      catch (err) { notify(err.message) }
+                    }}>
+                    <Check size={13} />
+                  </button>
+                  <button className="icon-btn" title="Cancel" onClick={() => setEditing(null)}><X size={13} /></button>
+                </div>
+              ) : (
+                <p>{c.body}</p>
+              )}
             </div>
           </div>
         ))}

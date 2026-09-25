@@ -100,6 +100,18 @@ export async function createBoard({ name, tagline, accent }) {
   return data
 }
 
+/** Owner or admin: fix the board's name / tagline / accent (RLS: migration-004). */
+export async function updateBoard(boardId, patch) {
+  const { data, error } = await supabase
+    .from('boards')
+    .update(patch)
+    .eq('id', boardId)
+    .select()
+    .single()
+  throwIf(error)
+  return data
+}
+
 export async function deleteBoard(boardId) {
   const { error } = await supabase.from('boards').delete().eq('id', boardId)
   throwIf(error)
@@ -282,6 +294,12 @@ export async function addComment(songId, userId, body) {
   const { error } = await supabase
     .from('comments')
     .insert({ song_id: songId, user_id: userId, body })
+  throwIf(error)
+}
+
+/** Author, owner or admin: change a note's text (edit_comment RPC, migration-004). */
+export async function editComment(id, body) {
+  const { error } = await supabase.rpc('edit_comment', { p_id: id, p_body: body })
   throwIf(error)
 }
 

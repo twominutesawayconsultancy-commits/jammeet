@@ -69,7 +69,7 @@ docs/AUDIT.md              technical audit + owner answers
   and handles looping, metronome lookahead, and pass detection.
 - **Play counting:** a pass = transport reaching the end (each loop lap counts) →
   `increment_play` RPC. Rating unlocks at 3 passes (UI-enforced only); a check-in
-  prompt asks for a rating at 3, 6, 10, then every 10 passes (`isRatingMilestone`).
+  prompt asks for a rating at 3, 6, 9, 15, then every 5 passes (`isRatingMilestone`).
   The board owner can rate for a member via `rate_for_member` (migration-003);
   `practice.rated_by` records who set the score (owner-set → "owner" tag).
 - **Stem cache** (`src/lib/cache.js`): decoded AudioBuffers in memory for the most

@@ -34,9 +34,9 @@ function songReadiness(song) {
   return { lane, avg, count: ratings.length }
 }
 
-/** Pass counts at which we ask "how confident are you now?": 3, 6, 10, 20, 30… */
+/** Pass counts at which we ask "how confident are you now?": 3, 6, 9, 15, 20, 25… */
 function isRatingMilestone(plays) {
-  return plays === 3 || plays === 6 || (plays >= 10 && plays % 10 === 0)
+  return plays === 3 || plays === 6 || plays === 9 || (plays >= 15 && plays % 5 === 0)
 }
 
 /** True when the board owner set this confidence on the musician's behalf. */
@@ -1399,7 +1399,7 @@ function PracticePanel({ plays, myRating, claimed, song, readiness, onRate, isOw
       </div>
       <p className="dim tiny">
         A pass counts when the transport runs the song to the end. Rate your
-        confidence after three passes — we'll check in again at 6, 10, then every 10.
+        confidence after three passes — we'll check in again at 6, 9, 15, then every 5.
       </p>
       <div className={`rate-row ${canRate ? '' : 'locked'}`} role="radiogroup" aria-label="Confidence 1 to 10">
         {SCORES.map((v) => (

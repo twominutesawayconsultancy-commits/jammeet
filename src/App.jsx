@@ -341,10 +341,23 @@ function Header({ profile, onHome, notify, onProfileSaved }) {
 function ProfilePopover({ profile, onSaved, onClose, notify }) {
   const [name, setName] = useState(profile.display_name || '')
   const [instruments, setInstruments] = useState(parseInstruments(profile.instrument))
-  // Keep any older free-text instrument visible so saving never silently drops it.
-  const choices = [...INSTRUMENTS, ...instruments.filter((x) => !INSTRUMENTS.includes(x))]
+  // Instruments not on the standard list (typed via "Other…", or older free text)
+  // stay visible as their own chips so saving never silently drops them.
+  const [extras, setExtras] = useState(() => instruments.filter((x) => !INSTRUMENTS.includes(x)))
+  const [otherOpen, setOtherOpen] = useState(false)
+  const [otherText, setOtherText] = useState('')
+  const choices = [...INSTRUMENTS, ...extras]
   const toggle = (x) => setInstruments((cur) =>
     cur.includes(x) ? cur.filter((y) => y !== x) : choices.filter((y) => y === x || cur.includes(y)))
+  const addOther = () => {
+    const typed = otherText.replace(/,/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 30)
+    if (!typed) return
+    const match = choices.find((c) => c.toLowerCase() === typed.toLowerCase())
+    const name = match || typed.charAt(0).toUpperCase() + typed.slice(1)
+    if (!match) setExtras((e) => [...e, name])
+    setInstruments((cur) => (cur.includes(name) ? cur : [...cur, name]))
+    setOtherText(''); setOtherOpen(false)
+  }
   const [saving, setSaving] = useState(false)
   const [cacheMb, setCacheMb] = useState(null)
   useEffect(() => {
@@ -367,7 +380,31 @@ function ProfilePopover({ profile, onSaved, onClose, notify }) {
               {x}
             </button>
           ))}
+          {!otherOpen && (
+            <button type="button" className="pick-chip pick-chip-other" onClick={() => setOtherOpen(true)}>
+              <Plus size={11} /> Other…
+            </button>
+          )}
         </div>
+        {otherOpen && (
+          <div className="row gap other-row">
+            <input
+              autoFocus
+              value={otherText}
+              maxLength={30}
+              placeholder="e.g. Saxophone, Violin, Flute"
+              aria-label="Other instrument"
+              onChange={(e) => setOtherText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') addOther()
+                if (e.key === 'Escape') { setOtherOpen(false); setOtherText('') }
+              }}
+            />
+            <button type="button" className="btn btn-ghost btn-sm" disabled={!otherText.trim()} onClick={addOther}>
+              <Plus size={12} /> Add
+            </button>
+          </div>
+        )}
       </div>
       <p className="dim tiny">
         Your instrument is shown to bandmates so everyone knows which stem is

@@ -652,3 +652,6 @@ select { cursor: pointer; }
 }
 .pick-chip:hover { border-color: var(--teal); color: var(--ink); }
 .pick-chip.on { background: var(--teal); border-color: var(--teal); color: #06211f; font-weight: 600; }
+.pick-chip-other { display: inline-flex; align-items: center; gap: 4px; border-style: dashed; }
+.other-row { margin-top: 8px; }
+.other-row input { flex: 1; min-width: 0; }

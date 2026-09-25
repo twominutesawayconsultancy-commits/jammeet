@@ -77,6 +77,7 @@ docs/AUDIT.md              technical audit + owner answers
   The board owner can rate for a member via `rate_for_member` (migration-003);
   `practice.rated_by` records who set the score (owner-set → "owner" tag).
 - **Instruments:** `profiles.instrument` holds a comma-separated pick from `INSTRUMENTS`
+  plus any typed via "Other…"
   (App.jsx); unknown legacy values are kept and shown as extra chips.
 - **Stem cache** (`src/lib/cache.js`): decoded AudioBuffers in memory for the most
   recently opened song only (`retainOnly` at load start; decoded audio is ~10 MB per

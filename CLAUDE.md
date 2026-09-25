@@ -41,6 +41,7 @@ src/lib/audio.js           demo-stem synth, Mixer, VU metering, metronome, forma
 src/lib/cache.js           stem cache (memory LRU + IndexedDB)
 supabase/schema.sql        tables, RLS, triggers, RPCs, storage bucket — idempotent
 supabase/migration-002-profile-reconcile.sql   secure reconcile_profile (live since 2026-09-24)
+supabase/migration-003-owner-rating.sql        practice.rated_by + rate_for_member (owner rates for a member)
 docs/AUDIT.md              technical audit + owner answers
 ```
 
@@ -67,7 +68,10 @@ docs/AUDIT.md              technical audit + owner answers
   sample-synced start with 80 ms lead; `update()` is driven by the SongView rAF loop
   and handles looping, metronome lookahead, and pass detection.
 - **Play counting:** a pass = transport reaching the end (each loop lap counts) →
-  `increment_play` RPC. Rating unlocks at 3 passes (UI-enforced only).
+  `increment_play` RPC. Rating unlocks at 3 passes (UI-enforced only); a check-in
+  prompt asks for a rating at 3, 6, 10, then every 10 passes (`isRatingMilestone`).
+  The board owner can rate for a member via `rate_for_member` (migration-003);
+  `practice.rated_by` records who set the score (owner-set → "owner" tag).
 - **Stem cache** (`src/lib/cache.js`): decoded AudioBuffers in memory for the most
   recently opened song only (`retainOnly` at load start; decoded audio is ~10 MB per
   stereo minute per stem, so never byte-cap below one song) + raw bytes in IndexedDB

@@ -251,9 +251,20 @@ export async function logPlay(songId) {
 export async function rateSong(songId, userId, confidence) {
   const { error } = await supabase
     .from('practice')
-    .update({ confidence, updated_at: new Date().toISOString() })
+    // rated_by = self clears any "set by owner" tag (migration-003).
+    .update({ confidence, rated_by: userId, updated_at: new Date().toISOString() })
     .eq('song_id', songId)
     .eq('user_id', userId)
+  throwIf(error)
+}
+
+/** Owner only: set a member's confidence for them (checked server-side). */
+export async function rateForMember(songId, userId, confidence) {
+  const { error } = await supabase.rpc('rate_for_member', {
+    p_song: songId,
+    p_user: userId,
+    p_confidence: confidence,
+  })
   throwIf(error)
 }
 

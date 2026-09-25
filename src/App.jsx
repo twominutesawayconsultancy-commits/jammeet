@@ -34,6 +34,14 @@ function songReadiness(song) {
   return { lane, avg, count: ratings.length }
 }
 
+/** Pass counts at which we ask "how confident are you now?": 3, 6, 10, 20, 30… */
+function isRatingMilestone(plays) {
+  return plays === 3 || plays === 6 || (plays >= 10 && plays % 10 === 0)
+}
+
+/** True when the board owner set this confidence on the musician's behalf. */
+const ratedByOwner = (p) => !!(p?.rated_by && p.rated_by !== p.user_id)
+
 const AUDIO_EXT = /\.(wav|mp3|m4a|aac|ogg|oga|flac|aif|aiff|webm)$/i
 const isAudioFile = (f) => (f.type && f.type.startsWith('audio/')) || AUDIO_EXT.test(f.name)
 
@@ -697,7 +705,7 @@ function SongCard({ song, readiness, members, onOpen, canDelete, onDelete }) {
               key={m.id}
               className="rdot"
               style={{ '--c': m.profiles?.color || '#39424e', opacity: c == null ? 0.25 : 1 }}
-              title={`${m.profiles?.display_name || m.email}: ${c == null ? 'not rated' : c + '/10'}`}
+              title={`${m.profiles?.display_name || m.email}: ${c == null ? 'not rated' : c + '/10'}${ratedByOwner(p) ? ' (set by owner)' : ''}`}
             >
               {c ?? '·'}
             </span>
@@ -1017,6 +1025,18 @@ function SongView({ boardId, song, members, myRole, profile, refresh, onBack, no
   const [myRating, setMyRating] = useState(myPractice?.confidence ?? null)
   const playsRef = useRef(plays)
   playsRef.current = plays
+  const [ratePromptAt, setRatePromptAt] = useState(null) // pass count that triggered the check-in
+
+  // Keep the local rating in step when the owner rates for you (arrives via refresh).
+  useEffect(() => { setMyRating(myPractice?.confidence ?? null) }, [myPractice?.confidence])
+
+  const rateMine = async (v) => {
+    try {
+      setMyRating(v)
+      await api.rateSong(song.id, profile.id, v)
+      refresh()
+    } catch (e) { notify(e.message) }
+  }
 
   const stemsSig = useMemo(
     () => JSON.stringify(song.stems.map((s) => [s.id, s.name, s.storage_path, s.source])),
@@ -1031,7 +1051,11 @@ function SongView({ boardId, song, members, myRole, profile, refresh, onBack, no
     mixer.setTempo(song.bpm, beatsPerBar)
     mixer.onPassComplete = () => {
       api.logPlay(song.id)
-        .then((n) => { setPlays(n); refresh() })
+        .then((n) => {
+          setPlays(n)
+          if (isRatingMilestone(n)) setRatePromptAt(n) // audio keeps playing underneath
+          refresh()
+        })
         .catch(() => { /* offline pass — not fatal */ })
     }
 
@@ -1298,17 +1322,26 @@ function SongView({ boardId, song, members, myRole, profile, refresh, onBack, no
             claimed={claimed}
             song={song}
             readiness={readiness}
-            onRate={async (v) => {
-              try {
-                setMyRating(v)
-                await api.rateSong(song.id, profile.id, v)
-                refresh()
-              } catch (e) { notify(e.message) }
+            onRate={rateMine}
+            isOwner={isOwner}
+            profileId={profile.id}
+            onRateFor={async (userId, v) => {
+              try { await api.rateForMember(song.id, userId, v); refresh() }
+              catch (e) { notify(e.message) }
             }}
           />
           <CommentsPanel song={song} profile={profile} myRole={myRole} notify={notify} onChanged={refresh} />
         </aside>
       </div>
+
+      {ratePromptAt != null && (
+        <RatePrompt
+          plays={ratePromptAt}
+          current={myRating}
+          onRate={(v) => { setRatePromptAt(null); rateMine(v) }}
+          onClose={() => setRatePromptAt(null)}
+        />
+      )}
 
       {showEdit && (
         <EditTracksModal
@@ -1325,8 +1358,35 @@ function SongView({ boardId, song, members, myRole, profile, refresh, onBack, no
 
 /* ---------------- practice / readiness ---------------- */
 
-function PracticePanel({ plays, myRating, claimed, song, readiness, onRate }) {
+const SCORES = Array.from({ length: 10 }, (_, i) => i + 1)
+
+/** Check-in that pops up at 3, 6, 10, 20… full passes. */
+function RatePrompt({ plays, current, onRate, onClose }) {
+  return (
+    <Modal title="How's it feeling?" onClose={onClose}>
+      <p>
+        That's <strong>{plays} full plays</strong> of this song. How confident are you
+        with your part right now?
+      </p>
+      <div className="rate-row" role="radiogroup" aria-label="Confidence 1 to 10">
+        {SCORES.map((v) => (
+          <button key={v} role="radio" aria-checked={current === v}
+            className={`rate-btn ${current === v ? 'on' : ''}`} onClick={() => onRate(v)}>
+            {v}
+          </button>
+        ))}
+      </div>
+      <p className="dim tiny">1 = still learning it · 10 = show-ready. We'll ask again as you keep playing.</p>
+      <div className="modal-actions">
+        <button className="btn btn-ghost" onClick={onClose}>Not now</button>
+      </div>
+    </Modal>
+  )
+}
+
+function PracticePanel({ plays, myRating, claimed, song, readiness, onRate, isOwner, profileId, onRateFor }) {
   const canRate = plays >= 3
+  const [pickFor, setPickFor] = useState(null) // member user_id the owner is rating
   return (
     <div className="panel">
       <h3>Woodshed log</h3>
@@ -1339,10 +1399,10 @@ function PracticePanel({ plays, myRating, claimed, song, readiness, onRate }) {
       </div>
       <p className="dim tiny">
         A pass counts when the transport runs the song to the end. Rate your
-        confidence after three passes.
+        confidence after three passes — we'll check in again at 6, 10, then every 10.
       </p>
       <div className={`rate-row ${canRate ? '' : 'locked'}`} role="radiogroup" aria-label="Confidence 1 to 10">
-        {Array.from({ length: 10 }, (_, i) => i + 1).map((v) => (
+        {SCORES.map((v) => (
           <button
             key={v}
             role="radio"
@@ -1361,14 +1421,43 @@ function PracticePanel({ plays, myRating, claimed, song, readiness, onRate }) {
       <ul className="readiness-list">
         {claimed.map((m) => {
           const p = (song.practice || []).find((x) => x.user_id === m.user_id)
+          const name = m.profiles?.display_name || m.email
+          const canSet = isOwner && m.user_id !== profileId
           return (
-            <li key={m.id}>
-              <span className="avatar sm" style={{ '--c': m.profiles?.color || '#39424e' }}>
-                {initials(m.profiles?.display_name || m.email)}
-              </span>
-              <span className="rl-name">{m.profiles?.display_name || m.email}</span>
-              <span className="dim tiny">{p?.plays ? `${p.plays}×` : ''}</span>
-              <span className="mono rl-score">{p?.confidence ?? '—'}</span>
+            <li key={m.id} className={pickFor === m.user_id ? 'picking' : ''}>
+              <div className="rl-row">
+                <span className="avatar sm" style={{ '--c': m.profiles?.color || '#39424e' }}>
+                  {initials(name)}
+                </span>
+                <span className="rl-name">{name}</span>
+                <span className="dim tiny">{p?.plays ? `${p.plays}×` : ''}</span>
+                {ratedByOwner(p) && (
+                  <span className="by-owner" title="Set by the board owner"><Crown size={10} /> owner</span>
+                )}
+                {canSet ? (
+                  <button
+                    className="mono rl-score rl-score-btn"
+                    title={`Rate for ${name}`}
+                    aria-expanded={pickFor === m.user_id}
+                    onClick={() => setPickFor(pickFor === m.user_id ? null : m.user_id)}
+                  >
+                    {p?.confidence ?? '—'} <Pencil size={10} />
+                  </button>
+                ) : (
+                  <span className="mono rl-score">{p?.confidence ?? '—'}</span>
+                )}
+              </div>
+              {pickFor === m.user_id && (
+                <div className="rate-row rate-row-sm" role="radiogroup" aria-label={`Confidence for ${name}`}>
+                  {SCORES.map((v) => (
+                    <button key={v} role="radio" aria-checked={p?.confidence === v}
+                      className={`rate-btn ${p?.confidence === v ? 'on' : ''}`}
+                      onClick={() => { setPickFor(null); onRateFor(m.user_id, v) }}>
+                      {v}
+                    </button>
+                  ))}
+                </div>
+              )}
             </li>
           )
         })}

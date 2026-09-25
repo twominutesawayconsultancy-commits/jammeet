@@ -4,7 +4,8 @@ Jam-Meet ("Jammit On") is an async band-rehearsal web app. One board per band; t
 owner uploads multitrack stems per song; each member opens a song, mutes their own
 instrument, plays along, and after 3 full passes rates confidence 1–10. Songs sort
 into lanes by band-average rating: Unrehearsed → Woodshedding (<4) → Tightening up
-(4–<7) → Show-ready (≥7).
+(4–<7) → Show-ready (≥7). The band average is over every joined member —
+not-yet-rated counts as 0 (`songReadiness(song, members)`).
 
 > ⚠️ **This app is LIVE with real users.** Protecting the running app beats every
 > other goal. See Guardrails.
@@ -41,6 +42,7 @@ src/lib/audio.js           demo-stem synth, Mixer, VU metering, metronome, forma
 src/lib/cache.js           stem cache (memory LRU + IndexedDB)
 supabase/schema.sql        tables, RLS, triggers, RPCs, storage bucket — idempotent
 supabase/migration-002-profile-reconcile.sql   secure reconcile_profile (live since 2026-09-24)
+supabase/migration-003-owner-rating.sql        practice.rated_by + rate_for_member (owner rates for a member)
 docs/AUDIT.md              technical audit + owner answers
 ```
 
@@ -67,7 +69,10 @@ docs/AUDIT.md              technical audit + owner answers
   sample-synced start with 80 ms lead; `update()` is driven by the SongView rAF loop
   and handles looping, metronome lookahead, and pass detection.
 - **Play counting:** a pass = transport reaching the end (each loop lap counts) →
-  `increment_play` RPC. Rating unlocks at 3 passes (UI-enforced only).
+  `increment_play` RPC. Rating unlocks at 3 passes (UI-enforced only); a check-in
+  prompt asks for a rating at 3, 6, 9, 15, then every 5 passes (`isRatingMilestone`).
+  The board owner can rate for a member via `rate_for_member` (migration-003);
+  `practice.rated_by` records who set the score (owner-set → "owner" tag).
 - **Stem cache** (`src/lib/cache.js`): decoded AudioBuffers in memory for the most
   recently opened song only (`retainOnly` at load start; decoded audio is ~10 MB per
   stereo minute per stem, so never byte-cap below one song) + raw bytes in IndexedDB

@@ -20,10 +20,11 @@ const KEY_ROOTS = ['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', '
 const SIGS = ['4/4', '3/4', '6/8', '2/4', '5/4', '7/8']
 const INSTRUMENTS = [
   'Guitar', 'Acoustic guitar', 'Electric guitar', 'Lead guitar', 'Rhythm guitar',
-  'Drums', 'Percussion', 'Keyboards 1', 'Keyboards 2', 'Piano', 'Vocals',
+  'Bass', 'Drums', 'Percussion', 'Keyboards 1', 'Keyboards 2', 'Piano', 'Vocals',
 ]
 /** profiles.instrument is stored as "Vocals, Rhythm guitar". */
-const parseInstruments = (str) => (str || '').split(',').map((x) => x.trim()).filter(Boolean)
+const parseInstruments = (str) => [...new Set((str || '').split(',').map((x) => x.trim()).filter(Boolean)
+  .map((x) => INSTRUMENTS.find((i) => i.toLowerCase() === x.toLowerCase()) || x))]
 
 const LANES = [
   { id: 'unrehearsed', label: 'Unrehearsed', hint: 'no ratings yet', tone: 'slate' },

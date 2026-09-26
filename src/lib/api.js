@@ -112,7 +112,32 @@ export async function updateBoard(boardId, patch) {
   return data
 }
 
+/**
+ * Remove every stem file under a storage folder: `<boardId>` (two levels deep)
+ * or `<boardId>/<songId>`. Best-effort — storage cleanup never blocks the delete
+ * the user asked for — but without it deleted songs leave their audio behind.
+ */
+async function removeStemFolder(prefix) {
+  try {
+    const bucket = supabase.storage.from('stems')
+    const paths = []
+    const walk = async (dir, depth) => {
+      const { data, error } = await bucket.list(dir, { limit: 1000 })
+      if (error || !data) return
+      for (const item of data) {
+        const full = `${dir}/${item.name}`
+        if (item.id) paths.push(full) // a file
+        else if (depth > 0) await walk(full, depth - 1) // a folder
+      }
+    }
+    await walk(prefix, prefix.includes('/') ? 0 : 1)
+    for (let i = 0; i < paths.length; i += 100) await bucket.remove(paths.slice(i, i + 100))
+  } catch { /* best-effort */ }
+}
+
 export async function deleteBoard(boardId) {
+  // Files first: once the board row is gone, nobody passes the storage policy.
+  await removeStemFolder(boardId)
   const { error } = await supabase.from('boards').delete().eq('id', boardId)
   throwIf(error)
 }
@@ -183,9 +208,11 @@ export async function updateSong(songId, patch) {
   throwIf(error)
 }
 
-export async function deleteSong(songId) {
+export async function deleteSong(songId, boardId) {
   const { error } = await supabase.from('songs').delete().eq('id', songId)
   throwIf(error)
+  // Row first (so a refused delete keeps its audio), then the song's files.
+  if (boardId) await removeStemFolder(`${boardId}/${songId}`)
 }
 
 /* ---------------- stems + storage ---------------- */
@@ -222,6 +249,19 @@ export async function uploadStemFile(boardId, songId, stemId, file) {
     .update({ storage_path: path, source: 'upload' })
     .eq('id', stemId)
   throwIf(e2)
+  return path
+}
+
+/**
+ * Swap a stem's audio safely: upload the new file and point the row at it
+ * FIRST, and only then delete the old file — a failed upload leaves the
+ * track playing its old audio instead of pointing at nothing.
+ */
+export async function replaceStemAudio(boardId, songId, stem, file) {
+  const path = await uploadStemFile(boardId, songId, stem.id, file)
+  if (stem.storage_path && stem.storage_path !== path) {
+    await supabase.storage.from('stems').remove([stem.storage_path]) // best-effort
+  }
   return path
 }
 

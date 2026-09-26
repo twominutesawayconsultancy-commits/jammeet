@@ -57,6 +57,10 @@ const ratedByOwner = (p) => !!(p?.rated_by && p.rated_by !== p.user_id)
 
 const AUDIO_EXT = /\.(wav|mp3|m4a|aac|ogg|oga|flac|aif|aiff|webm)$/i
 const isAudioFile = (f) => (f.type && f.type.startsWith('audio/')) || AUDIO_EXT.test(f.name)
+/** Lossless/big files eat storage and download time; MP3 is plenty for rehearsal. */
+const isHeavyAudio = (f) => /\.(wav|aif|aiff|flac)$/i.test(f.name) || f.size > 15 * 1048576
+const HEAVY_AUDIO_TIP = 'Tip: export stems as MP3 (192 kbps) — about 5× smaller, sounds the same for rehearsal, and loads much faster for everyone.'
+const formatMb = (bytes) => `${(bytes / 1048576).toFixed(1)} MB`
 
 /** "03 - Bass DI.wav" -> "Bass DI" */
 function cleanTrackName(filename) {
@@ -811,7 +815,7 @@ function BoardView({ boardId, songId, profile, notify, onBack, onOpenSong, onClo
                   canDelete={isOwner}
                   onDelete={async () => {
                     if (!window.confirm(`Delete "${s.title}"? Stems, ratings and comments go with it.`)) return
-                    try { await api.deleteSong(s.id); refresh() } catch (e) { notify(e.message) }
+                    try { await api.deleteSong(s.id, boardId); refresh() } catch (e) { notify(e.message) }
                   }}
                 />
               ))}
@@ -1051,13 +1055,21 @@ function NewSongModal({ boardId, onClose, onCreated, notify }) {
                     onClick={(e) => e.stopPropagation()}
                     onChange={(e) => setFiles(files.map((x, j) => j === i ? { ...x, name: e.target.value } : x))}
                   />
-                  <span className="dim tiny mono">{f.file.name}</span>
+                  <span className={`tiny mono ${isHeavyAudio(f.file) ? 'heavy-file' : 'dim'}`}>
+                    {f.file.name} · {formatMb(f.file.size)}
+                  </span>
                   <button className="icon-btn" onClick={(e) => { e.stopPropagation(); setFiles(files.filter((_, j) => j !== i)) }} aria-label="Remove file">
                     <X size={13} />
                   </button>
                 </li>
               ))}
             </ul>
+          )}
+          {files.some((f) => isHeavyAudio(f.file)) && (
+            <p className="heavy-hint tiny">
+              {files.filter((f) => isHeavyAudio(f.file)).length} large file(s),{' '}
+              {formatMb(files.reduce((n, f) => n + f.file.size, 0))} in total. {HEAVY_AUDIO_TIP}
+            </p>
           )}
         </div>
       )}
@@ -1790,9 +1802,9 @@ function EditTracksModal({ boardId, song, onClose, refresh, notify }) {
     if (!isAudioFile(file)) { notify('That file doesn\'t look like audio.'); return }
     setBusyId(stem.id)
     try {
-      if (stem.storage_path) await supabase.storage.from('stems').remove([stem.storage_path])
+      await api.replaceStemAudio(boardId, song.id, stem, file)
       cache.dropMemory(stem.id) // this device is holding the old decode
-      await api.uploadStemFile(boardId, song.id, stem.id, file)
+      if (isHeavyAudio(file)) notify(HEAVY_AUDIO_TIP, 'info')
       refresh()
     } catch (e) { notify(e.message) } finally { setBusyId(null) }
   }
@@ -1807,6 +1819,7 @@ function EditTracksModal({ boardId, song, onClose, refresh, notify }) {
         sort: song.stems.length,
       })
       await api.uploadStemFile(boardId, song.id, stem.id, file)
+      if (isHeavyAudio(file)) notify(HEAVY_AUDIO_TIP, 'info')
       refresh()
     } catch (e) { notify(e.message) } finally { setBusyId(null) }
   }

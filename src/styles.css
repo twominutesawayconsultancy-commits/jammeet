@@ -655,3 +655,7 @@ select { cursor: pointer; }
 .pick-chip-other { display: inline-flex; align-items: center; gap: 4px; border-style: dashed; }
 .other-row { margin-top: 8px; }
 .other-row input { flex: 1; min-width: 0; }
+
+/* --- large-upload hints --- */
+.heavy-file { color: var(--amber); }
+.heavy-hint { color: var(--amber); margin: 10px 0 0; text-align: left; }

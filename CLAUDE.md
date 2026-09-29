@@ -34,7 +34,8 @@ No test, lint, or CI setup exists yet (Phase 1 adds them).
 ```
 index.html                 shell + Google Fonts; loads /src/main.jsx
 src/main.jsx               React entry (StrictMode)
-src/App.jsx                the ENTIRE UI (~1,530 lines): auth, boards, lanes, console, modals
+src/App.jsx                most of the UI: auth, boards, lanes, console, modals
+src/Gigs.jsx               board Gigs tab: calendar, In/Maybe/Out answers (append-only log), setlists, gig notes
 src/styles.css             dark studio/console design system
 src/supabaseClient.js      client from env vars (or null)
 src/lib/api.js             ALL database + storage calls
@@ -44,6 +45,7 @@ supabase/schema.sql        tables, RLS, triggers, RPCs, storage bucket — idemp
 supabase/migration-002-profile-reconcile.sql   secure reconcile_profile (live since 2026-09-24)
 supabase/migration-003-owner-rating.sql        practice.rated_by + rate_for_member (owner rates for a member)
 supabase/migration-004-admin-edits.sql         admins edit boards; owner/admins moderate + edit notes (edit_comment)
+supabase/migration-005-gigs.sql                gigs, gig_answers (append-only), gig_songs, gig_notes. On Woodshed only; NOT yet on live
 docs/AUDIT.md              technical audit + owner answers
 ```
 
@@ -95,9 +97,11 @@ docs/AUDIT.md              technical audit + owner answers
 
 ## Guardrails
 - **Never push to `main`.** Work on a branch; merge only on explicit owner approval.
-- **One shared database, no staging.** Preview deploys and local dev hit the live
-  Supabase project — clicking around on a preview writes real data. Google sign-in on
-  previews may bounce to prod unless the preview domain is in Supabase Redirect URLs.
+- **Staging = Woodshed.** Vercel PREVIEW builds use the Woodshed test project
+  (`niluzclxingovirduisu`, schema mirrors live) via `src/supabaseClient.js`; they show a
+  "TEST · Woodshed data" tag. Production builds and local dev use the VITE_SUPABASE_*
+  env vars (live). Apply new migrations to Woodshed first, test on the preview, and
+  only then (with the owner's OK) to live, before merging code that needs them.
 - **Schema changes:** propose migration SQL for explicit review. Don't run it against
   live yourself unless the owner explicitly OKs that specific migration in the session
   (a Supabase connector may be attached; read-only queries are fine). Never run

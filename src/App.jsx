@@ -6,10 +6,11 @@ import {
   Mixer, synthDemoStems, decodeAudio, formatTime, DEMO_TRACK_NAMES,
 } from './lib/audio'
 import * as cache from './lib/cache'
+import GigsView from './Gigs.jsx'
 import {
   Play, Pause, Square, Repeat, Plus, X, Trash2, Users, LogOut, Upload,
   ChevronLeft, Crown, Shield, MessageSquare, Music2, FolderOpen, Pencil,
-  Check, RefreshCw, Timer, Sparkles, Send, UserPlus, SlidersHorizontal,
+  Check, RefreshCw, Timer, Sparkles, Send, UserPlus, SlidersHorizontal, CalendarDays,
 } from 'lucide-react'
 
 /* ================================================================== */
@@ -26,7 +27,7 @@ const INSTRUMENTS = [
 const parseInstruments = (str) => [...new Set((str || '').split(',').map((x) => x.trim()).filter(Boolean)
   .map((x) => INSTRUMENTS.find((i) => i.toLowerCase() === x.toLowerCase()) || x))]
 
-const LANES = [
+export const LANES = [
   { id: 'unrehearsed', label: 'Unrehearsed', hint: 'no ratings yet', tone: 'slate' },
   { id: 'woodshedding', label: 'Woodshedding', hint: 'avg below 4', tone: 'amber' },
   { id: 'tightening', label: 'Tightening up', hint: 'avg 4 – 7', tone: 'lime' },
@@ -37,7 +38,7 @@ const LANES = [
  * Band readiness = average over EVERY joined member; anyone who hasn't rated
  * yet counts as 0, so one bandmate's 8 can't make the whole song look ready.
  */
-function songReadiness(song, members) {
+export function songReadiness(song, members) {
   const joined = new Set(members.filter((m) => m.user_id).map((m) => m.user_id))
   const ratings = (song.practice || []).filter((p) => p.confidence != null && joined.has(p.user_id))
   const total = joined.size
@@ -97,7 +98,7 @@ async function filesFromDataTransfer(dt) {
   return out
 }
 
-function initials(name = '?') {
+export function initials(name = '?') {
   return name.trim().split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase() || '').join('')
 }
 
@@ -709,6 +710,7 @@ function BoardView({ boardId, songId, profile, notify, onBack, onOpenSong, onClo
   const [showNewSong, setShowNewSong] = useState(false)
   const [showMembers, setShowMembers] = useState(false)
   const [showEditBoard, setShowEditBoard] = useState(false)
+  const [tab, setTab] = useState('songs') // songs | gigs
 
   const refresh = useCallback(() => {
     api.fetchBoardBundle(boardId).then(setBundle).catch((e) => notify(e.message))
@@ -765,6 +767,14 @@ function BoardView({ boardId, songId, profile, notify, onBack, onOpenSong, onClo
           <h1>{board.name}</h1>
           {board.tagline && <span className="dim">{board.tagline}</span>}
         </div>
+        <div className="seg board-tabs" role="tablist" aria-label="Board view">
+          <button role="tab" aria-selected={tab === 'songs'} className={tab === 'songs' ? 'on' : ''} onClick={() => setTab('songs')}>
+            <Music2 size={14} /> Songs
+          </button>
+          <button role="tab" aria-selected={tab === 'gigs'} className={tab === 'gigs' ? 'on' : ''} onClick={() => setTab('gigs')}>
+            <CalendarDays size={14} /> Gigs
+          </button>
+        </div>
         <div className="row gap">
           <div className="member-dots" title={members.map((m) => m.profiles?.display_name || m.email).join(', ')}>
             {members.slice(0, 6).map((m) => (
@@ -786,7 +796,7 @@ function BoardView({ boardId, songId, profile, notify, onBack, onOpenSong, onClo
               <Pencil size={14} /> Edit board
             </button>
           )}
-          {canAdmin && (
+          {canAdmin && tab === 'songs' && (
             <button className="btn btn-primary" onClick={() => setShowNewSong(true)}>
               <Plus size={15} /> Add song
             </button>
@@ -794,7 +804,12 @@ function BoardView({ boardId, songId, profile, notify, onBack, onOpenSong, onClo
         </div>
       </div>
 
-      <div className="lanes">
+      {tab === 'gigs' && (
+        <GigsView board={board} members={members} songs={songs} profile={profile}
+          myRole={myRole} notify={notify} onOpenSong={onOpenSong} />
+      )}
+
+      {tab === 'songs' && <div className="lanes">
         {LANES.map((lane) => (
           <section key={lane.id} className={`lane lane-${lane.tone}`}>
             <header className="lane-head">
@@ -822,7 +837,7 @@ function BoardView({ boardId, songId, profile, notify, onBack, onOpenSong, onClo
             </div>
           </section>
         ))}
-      </div>
+      </div>}
 
       {showNewSong && (
         <NewSongModal
@@ -1884,7 +1899,7 @@ function EditTracksModal({ boardId, song, onClose, refresh, notify }) {
 /* Modal shell                                                         */
 /* ================================================================== */
 
-function Modal({ title, onClose, children, wide }) {
+export function Modal({ title, onClose, children, wide }) {
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape' && onClose) onClose() }
     window.addEventListener('keydown', onKey)

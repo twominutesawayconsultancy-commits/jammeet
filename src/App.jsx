@@ -1641,7 +1641,7 @@ function PracticePanel({ plays, myRating, claimed, song, readiness, onRate, isOw
                 <span className="rl-name">{name}</span>
                 <span className="dim tiny">{p?.plays ? `${p.plays}×` : ''}</span>
                 {ratedByOwner(p) && (
-                  <span className="by-owner" title="Set by the board owner"><Crown size={10} /> owner</span>
+                  <span className="by-owner" title="This score was set by the board owner"><span className="owner-dot" aria-hidden="true" /> set by owner</span>
                 )}
                 {canSet ? (
                   <button

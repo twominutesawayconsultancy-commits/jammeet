@@ -577,9 +577,12 @@ select { cursor: pointer; }
 .rate-row-sm { margin: 6px 0 2px; gap: 3px; }
 .rate-row-sm .rate-btn { height: 24px; font-size: 11px; }
 .by-owner {
-  display: inline-flex; align-items: center; gap: 3px; font-size: 10px;
-  color: var(--amber); border: 1px solid currentColor; border-radius: 999px;
-  padding: 0 6px; opacity: 0.85;
+  display: inline-flex; align-items: center; gap: 4px; font-size: 10px;
+  color: var(--dim);
+}
+.owner-dot {
+  width: 6px; height: 6px; border-radius: 999px; flex: none;
+  background: #5aa9e6;
 }
 .band-avg {
   display: flex; justify-content: space-between; align-items: center;

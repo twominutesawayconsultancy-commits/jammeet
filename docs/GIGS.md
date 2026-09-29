@@ -43,9 +43,12 @@ otherwise. `boards.gigs_enabled` (migration-006, default false) controls it:
 - Database: gigs can't be created and `add_band_person`/`update_band_person` refuse
   on boards where it's off; a trigger stops owners/admins flipping it via the API.
 - Switch on by id in the SQL editor: `update boards set gigs_enabled = true where id = '…'`.
-  Woodshed: on for the test board. Live: not applied yet.
+  Woodshed: on for the test board. Live (30 Sep 2026): 005+006 applied, on for
+  "Arindam Sinha Collective" only; lockout verified on every other live board.
+  **Owner rule: Gigs stay on this one board only. Never switch it on elsewhere
+  without the owner's explicit OK.**
 
-## Band roster + chat history (migration-006, Woodshed only)
+## Band roster + chat history (migration-006)
 - **People without accounts.** Owner/admins add band members by name in Members;
   email optional. No email → placeholder `<name>-<hex>@no-email.invalid` (can't be a
   real address). Fix the name/email later (pencil icon); when that person signs in

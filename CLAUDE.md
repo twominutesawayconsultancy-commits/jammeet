@@ -50,9 +50,10 @@ supabase/schema.sql        tables, RLS, triggers, RPCs, storage bucket — idemp
 supabase/migration-002-profile-reconcile.sql   secure reconcile_profile (live since 2026-09-24)
 supabase/migration-003-owner-rating.sql        practice.rated_by + rate_for_member (owner rates for a member)
 supabase/migration-004-admin-edits.sql         admins edit boards; owner/admins moderate + edit notes (edit_comment)
-supabase/migration-005-gigs.sql                gigs, gig_answers (append-only), gig_songs, gig_notes. On Woodshed only; NOT yet on live
+supabase/migration-005-gigs.sql                gigs, gig_answers (append-only), gig_songs, gig_notes. Live since 2026-09-30
 supabase/migration-006-band-roster.sql         boards.gigs_enabled per-board switch (Gigs only where on); band people without accounts (placeholder emails), answers per membership,
-                                               chat-sourced answers (source/said_at/person_name). Needs 005. Woodshed only
+                                               chat-sourced answers (source/said_at/person_name). Live since 2026-09-30;
+                                               gigs_enabled ONLY on the Arindam Sinha Collective board (owner rule)
 docs/AUDIT.md              technical audit + owner answers
 ```
 

@@ -10,6 +10,7 @@ not-yet-rated counts as 0 (`songReadiness(song, members)`).
 > ⚠️ **This app is LIVE with real users.** Protecting the running app beats every
 > other goal. See Guardrails.
 
+See `docs/GIGS.md` for the Gigs feature (calendar, availability, setlists): state, staging, next steps.
 See `docs/AUDIT.md` for the current technical audit, open owner questions, and the
 proposed Phase 1 sequence.
 
@@ -28,13 +29,18 @@ npm install
 npm run dev      # http://localhost:5173 (needs .env with the two vars)
 npm run build    # must pass before any change is called done
 ```
+Without the two env vars, `supabase` is a constant null and Vite drops most of the
+app, so a bare local build proves little. Verify with `VERCEL_ENV=preview npm run build`
+(Woodshed keys) or with dummy `VITE_SUPABASE_*` values.
 No test, lint, or CI setup exists yet (Phase 1 adds them).
 
 ## Layout
 ```
 index.html                 shell + Google Fonts; loads /src/main.jsx
 src/main.jsx               React entry (StrictMode)
-src/App.jsx                the ENTIRE UI (~1,530 lines): auth, boards, lanes, console, modals
+src/App.jsx                most of the UI: auth, boards, lanes, console, modals
+src/Gigs.jsx               board Gigs tab: calendar, In/Maybe/Out answers (append-only log), setlists, gig notes
+src/GigImport.jsx          owner/admin: review + save gigs/answers Claude extracted from a WhatsApp export
 src/styles.css             dark studio/console design system
 src/supabaseClient.js      client from env vars (or null)
 src/lib/api.js             ALL database + storage calls
@@ -44,6 +50,10 @@ supabase/schema.sql        tables, RLS, triggers, RPCs, storage bucket — idemp
 supabase/migration-002-profile-reconcile.sql   secure reconcile_profile (live since 2026-09-24)
 supabase/migration-003-owner-rating.sql        practice.rated_by + rate_for_member (owner rates for a member)
 supabase/migration-004-admin-edits.sql         admins edit boards; owner/admins moderate + edit notes (edit_comment)
+supabase/migration-005-gigs.sql                gigs, gig_answers (append-only), gig_songs, gig_notes. Live since 2026-09-30
+supabase/migration-006-band-roster.sql         boards.gigs_enabled per-board switch (Gigs only where on); band people without accounts (placeholder emails), answers per membership,
+                                               chat-sourced answers (source/said_at/person_name). Live since 2026-09-30;
+                                               gigs_enabled ONLY on the Arindam Sinha Collective board (owner rule)
 docs/AUDIT.md              technical audit + owner answers
 ```
 
@@ -61,7 +71,10 @@ docs/AUDIT.md              technical audit + owner answers
   and any note (edit via `edit_comment`, delete). Owner only: delete board/songs, invite.
   Owner membership is created by the `handle_new_board` trigger; profiles by
   `handle_new_user` (plus client `ensureProfile`). Invites are `memberships` rows with
-  null `user_id`, claimed by `claim_invites()` on login.
+  null `user_id`, claimed by `claim_invites()` on login. Since migration-006 owner +
+  admins add band people by name (`add_band_person`); no email → placeholder
+  `…@no-email.invalid`, fixed later via `update_band_person`. Use `memberName(m)`
+  (App.jsx) for display, never raw `m.email`.
 - **Stems:** `source='demo'` stems store no audio — synthesized in-browser from the
   song's key/BPM/signature (`synthDemoStems`). `source='upload'` stems live in the
   private `stems` bucket at `<boardId>/<songId>/<stemId>-<rev>.<ext>` (older uploads
@@ -94,10 +107,15 @@ docs/AUDIT.md              technical audit + owner answers
 - The owner has historically committed via GitHub web upload; check for stray files.
 
 ## Guardrails
+- **Band chat content never goes in this repo** (it's public): no exports, quotes,
+  phone numbers or extracted gig JSON. That data lives only in the private Supabase
+  tables (members-only RLS) and the owner's private Claude Project.
 - **Never push to `main`.** Work on a branch; merge only on explicit owner approval.
-- **One shared database, no staging.** Preview deploys and local dev hit the live
-  Supabase project — clicking around on a preview writes real data. Google sign-in on
-  previews may bounce to prod unless the preview domain is in Supabase Redirect URLs.
+- **Staging = Woodshed.** Vercel PREVIEW builds use the Woodshed test project
+  (`niluzclxingovirduisu`, schema mirrors live) via `src/supabaseClient.js`; they show a
+  "TEST · Woodshed data" tag. Production builds and local dev use the VITE_SUPABASE_*
+  env vars (live). Apply new migrations to Woodshed first, test on the preview, and
+  only then (with the owner's OK) to live, before merging code that needs them.
 - **Schema changes:** propose migration SQL for explicit review. Don't run it against
   live yourself unless the owner explicitly OKs that specific migration in the session
   (a Supabase connector may be attached; read-only queries are fine). Never run

@@ -169,11 +169,39 @@ export async function fetchBoardBundle(boardId) {
 
 /* ---------------- memberships ---------------- */
 
+/** Owner-only invite by email (boards without Gigs). */
 export async function inviteMember(boardId, email, role) {
   const { error } = await supabase.rpc('invite_member', {
     p_board: boardId,
     p_email: email.trim().toLowerCase(),
     p_role: role,
+  })
+  throwIf(error)
+}
+
+/**
+ * Add someone to the band (migration-006). Email is optional: without one the
+ * row gets a placeholder address the owner/admins can fix later. When the
+ * person signs in with that Google email, claim_invites links them.
+ * Owner may add admins; admins add members only (checked server-side).
+ */
+export async function addBandPerson(boardId, name, email, role = 'member') {
+  const { data, error } = await supabase.rpc('add_band_person', {
+    p_board: boardId,
+    p_name: name?.trim() || null,
+    p_email: email?.trim().toLowerCase() || null,
+    p_role: role,
+  })
+  throwIf(error)
+  return data
+}
+
+/** Fix the name/email of someone who hasn't signed in yet (owner/admin). */
+export async function updateBandPerson(membershipId, name, email) {
+  const { error } = await supabase.rpc('update_band_person', {
+    p_membership: membershipId,
+    p_name: name?.trim() || null,
+    p_email: email?.trim().toLowerCase() || null,
   })
   throwIf(error)
 }
@@ -345,5 +373,102 @@ export async function editComment(id, body) {
 
 export async function deleteComment(id) {
   const { error } = await supabase.from('comments').delete().eq('id', id)
+  throwIf(error)
+}
+
+/* ---------------- gigs (migration-005) ---------------- */
+
+/** All gigs on a board with their answer log and setlist, oldest date first. */
+export async function fetchGigs(boardId) {
+  const { data, error } = await supabase
+    .from('gigs')
+    .select('*, gig_answers(*), gig_songs(song_id, position)')
+    .eq('board_id', boardId)
+    .order('gig_date', { ascending: true })
+  throwIf(error)
+  return (data || []).map((g) => ({
+    ...g,
+    gig_answers: (g.gig_answers || []).sort((a, z) =>
+      a.said_at.localeCompare(z.said_at) || a.created_at.localeCompare(z.created_at)),
+    gig_songs: (g.gig_songs || []).sort((a, z) => a.position - z.position),
+  }))
+}
+
+export async function createGig(boardId, userId, { gig_date, title, venue, status, details }) {
+  const { data, error } = await supabase
+    .from('gigs')
+    .insert({ board_id: boardId, created_by: userId, gig_date, title, venue, status, details })
+    .select()
+    .single()
+  throwIf(error)
+  return data
+}
+
+export async function updateGig(gigId, patch) {
+  const { error } = await supabase
+    .from('gigs')
+    .update({ ...patch, updated_at: new Date().toISOString() })
+    .eq('id', gigId)
+  throwIf(error)
+}
+
+export async function deleteGig(gigId) {
+  const { error } = await supabase.from('gigs').delete().eq('id', gigId)
+  throwIf(error)
+}
+
+/**
+ * Record an availability answer. Answers are an append-only log: this always
+ * inserts, never overwrites, so every change stays on record with its time.
+ * `membershipId` is whose answer it is (anyone on the board, joined or not);
+ * `setBy` is the signed-in user (owner/admin may answer for others).
+ */
+export async function answerGig(gigId, membershipId, answer, note, setBy) {
+  const { error } = await supabase
+    .from('gig_answers')
+    .insert({ gig_id: gigId, membership_id: membershipId, answer, note: note || null, set_by: setBy })
+  throwIf(error)
+}
+
+/**
+ * Owner/admin: save answers taken from a WhatsApp chat export. Each row:
+ * { gig_id, membership_id, answer, note, said_at }. Stored with source 'chat'.
+ */
+export async function addChatAnswers(rows, setBy) {
+  if (!rows.length) return
+  const { error } = await supabase
+    .from('gig_answers')
+    .insert(rows.map((r) => ({ ...r, source: 'chat', set_by: setBy })))
+  throwIf(error)
+}
+
+/** Replace a gig's setlist with `songIds` in order. */
+export async function setGigSetlist(gigId, songIds) {
+  const del = await supabase.from('gig_songs').delete().eq('gig_id', gigId)
+  throwIf(del.error)
+  if (songIds.length === 0) return
+  const { error } = await supabase
+    .from('gig_songs')
+    .insert(songIds.map((song_id, position) => ({ gig_id: gigId, song_id, position })))
+  throwIf(error)
+}
+
+export async function fetchGigNotes(gigId) {
+  const { data, error } = await supabase
+    .from('gig_notes')
+    .select('*, profiles(display_name, color)')
+    .eq('gig_id', gigId)
+    .order('created_at', { ascending: true })
+  throwIf(error)
+  return data || []
+}
+
+export async function addGigNote(gigId, userId, body) {
+  const { error } = await supabase.from('gig_notes').insert({ gig_id: gigId, user_id: userId, body })
+  throwIf(error)
+}
+
+export async function deleteGigNote(id) {
+  const { error } = await supabase.from('gig_notes').delete().eq('id', id)
   throwIf(error)
 }

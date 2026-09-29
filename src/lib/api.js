@@ -169,6 +169,16 @@ export async function fetchBoardBundle(boardId) {
 
 /* ---------------- memberships ---------------- */
 
+/** Owner-only invite by email (boards without Gigs). */
+export async function inviteMember(boardId, email, role) {
+  const { error } = await supabase.rpc('invite_member', {
+    p_board: boardId,
+    p_email: email.trim().toLowerCase(),
+    p_role: role,
+  })
+  throwIf(error)
+}
+
 /**
  * Add someone to the band (migration-006). Email is optional: without one the
  * row gets a placeholder address the owner/admins can fix later. When the

@@ -35,6 +35,16 @@ with a shared calendar on each Jam-Meet board:
   for others; nobody can update or delete answers.
 - `npm run build` passes. Not yet clicked through end-to-end in a browser.
 
+## Per-board switch (owner decision, 30 Sep 2026)
+Gigs stay on ONE board only ("Arindam Sinha Collective") until the owner says
+otherwise. `boards.gigs_enabled` (migration-006, default false) controls it:
+- App: no Gigs tab and the original owner-only "Invite by email" on boards where
+  it's off; add-by-name + Gigs only where it's on.
+- Database: gigs can't be created and `add_band_person`/`update_band_person` refuse
+  on boards where it's off; a trigger stops owners/admins flipping it via the API.
+- Switch on by id in the SQL editor: `update boards set gigs_enabled = true where id = '…'`.
+  Woodshed: on for the test board. Live: not applied yet.
+
 ## Band roster + chat history (migration-006, Woodshed only)
 - **People without accounts.** Owner/admins add band members by name in Members;
   email optional. No email → placeholder `<name>-<hex>@no-email.invalid` (can't be a

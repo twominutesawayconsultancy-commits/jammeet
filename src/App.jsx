@@ -720,7 +720,7 @@ function BoardView({ boardId, songId, profile, notify, onBack, onOpenSong, onClo
   const [showNewSong, setShowNewSong] = useState(false)
   const [showMembers, setShowMembers] = useState(false)
   const [showEditBoard, setShowEditBoard] = useState(false)
-  const [tab, setTab] = useState('songs') // songs | gigs
+  const [rawTab, setTab] = useState('songs') // songs | gigs
 
   const refresh = useCallback(() => {
     api.fetchBoardBundle(boardId).then(setBundle).catch((e) => notify(e.message))
@@ -740,6 +740,10 @@ function BoardView({ boardId, songId, profile, notify, onBack, onOpenSong, onClo
   const myRole = me?.role || 'member'
   const canAdmin = myRole === 'owner' || myRole === 'admin'
   const isOwner = myRole === 'owner'
+  // Gigs (and adding members by name) are switched on per board in the
+  // database (boards.gigs_enabled, migration-006); other boards look as before.
+  const gigsOn = !!board.gigs_enabled
+  const tab = gigsOn ? rawTab : 'songs'
 
   const song = songId ? songs.find((s) => s.id === songId) : null
   if (songId && !song) return null
@@ -777,14 +781,16 @@ function BoardView({ boardId, songId, profile, notify, onBack, onOpenSong, onClo
           <h1>{board.name}</h1>
           {board.tagline && <span className="dim">{board.tagline}</span>}
         </div>
-        <div className="seg board-tabs" role="tablist" aria-label="Board view">
-          <button role="tab" aria-selected={tab === 'songs'} className={tab === 'songs' ? 'on' : ''} onClick={() => setTab('songs')}>
-            <Music2 size={14} /> Songs
-          </button>
-          <button role="tab" aria-selected={tab === 'gigs'} className={tab === 'gigs' ? 'on' : ''} onClick={() => setTab('gigs')}>
-            <CalendarDays size={14} /> Gigs
-          </button>
-        </div>
+        {gigsOn && (
+          <div className="seg board-tabs" role="tablist" aria-label="Board view">
+            <button role="tab" aria-selected={tab === 'songs'} className={tab === 'songs' ? 'on' : ''} onClick={() => setTab('songs')}>
+              <Music2 size={14} /> Songs
+            </button>
+            <button role="tab" aria-selected={tab === 'gigs'} className={tab === 'gigs' ? 'on' : ''} onClick={() => setTab('gigs')}>
+              <CalendarDays size={14} /> Gigs
+            </button>
+          </div>
+        )}
         <div className="row gap">
           <div className="member-dots" title={members.map(memberName).join(', ')}>
             {members.slice(0, 6).map((m) => (
@@ -792,7 +798,7 @@ function BoardView({ boardId, songId, profile, notify, onBack, onOpenSong, onClo
                 key={m.id}
                 className={`avatar sm ${m.user_id ? '' : 'pending'}`}
                 style={{ '--c': m.profiles?.color || '#39424e' }}
-                title={m.user_id ? memberName(m) : `${memberName(m)} (not joined yet)`}
+                title={m.user_id ? memberName(m) : `${memberName(m)} (invited)`}
               >
                 {initials(memberName(m))}
               </span>
@@ -1122,14 +1128,19 @@ function MembersModal({ board, members, myRole, profile, refresh, onClose, onLef
   const [busy, setBusy] = useState(false)
   const [editId, setEditId] = useState(null)
   const isOwner = myRole === 'owner'
-  const canAdd = isOwner || myRole === 'admin'
+  // Boards without Gigs keep the original owner-only invite-by-email.
+  const byName = !!board.gigs_enabled
+  const canAdd = isOwner || (byName && myRole === 'admin')
   const adminCount = members.filter((m) => m.role === 'admin').length
-  const emailOk = !email.trim() || /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim())
+  const emailOk = byName
+    ? !email.trim() || /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim())
+    : email.includes('@')
 
   const add = async () => {
     setBusy(true)
     try {
-      await api.addBandPerson(board.id, name, email, isOwner ? role : 'member')
+      if (byName) await api.addBandPerson(board.id, name, email, isOwner ? role : 'member')
+      else await api.inviteMember(board.id, email, role)
       setName(''); setEmail(''); refresh()
     } catch (e) { notify(e.message) } finally { setBusy(false) }
   }
@@ -1151,15 +1162,17 @@ function MembersModal({ board, members, myRole, profile, refresh, onClose, onLef
                 <span className="dim tiny">
                   {m.user_id
                     ? (m.profiles?.instrument || m.email)
-                    : isPlaceholderEmail(m.email)
-                      ? 'not joined · no email yet'
-                      : `not joined · joins when ${m.email} signs in`}
+                    : !byName
+                      ? 'invited — joins on first sign-in'
+                      : isPlaceholderEmail(m.email)
+                        ? 'not joined · no email yet'
+                        : `not joined · joins when ${m.email} signs in`}
                 </span>
               </div>
             )}
             {editId !== m.id && (
               <div className="row gap">
-                {canAdd && !m.user_id && (
+                {byName && canAdd && !m.user_id && (
                   <button className="icon-btn" title="Edit name / email" onClick={() => setEditId(m.id)}>
                     <Pencil size={14} />
                   </button>
@@ -1178,7 +1191,7 @@ function MembersModal({ board, members, myRole, profile, refresh, onClose, onLef
                     </select>
                     <button className="icon-btn danger" title="Remove"
                       onClick={async () => {
-                        if (!window.confirm(`Remove ${memberName(m)} from ${board.name}? Their gig answers stay on record.`)) return
+                        if (!window.confirm(`Remove ${memberName(m)} from ${board.name}?${byName ? ' Their gig answers stay on record.' : ''}`)) return
                         try { await api.removeMember(m.id); refresh() } catch (err) { notify(err.message) }
                       }}>
                       <Trash2 size={14} />
@@ -1193,17 +1206,17 @@ function MembersModal({ board, members, myRole, profile, refresh, onClose, onLef
 
       {canAdd && (
         <div className="invite-box">
-          <h4><UserPlus size={14} /> Add a band member</h4>
+          <h4><UserPlus size={14} /> {byName ? 'Add a band member' : 'Invite by email'}</h4>
           <p className="dim tiny">
-            Email is optional: add the name now and fill in their Google email later.
-            They see this board the first time they sign in with that email, and
-            their gig answers come with them.
+            {byName
+              ? 'Email is optional: add the name now and fill in their Google email later. They see this board the first time they sign in with that email, and their gig answers come with them.'
+              : 'They\'ll see this board the first time they sign in with that Google account.'}
             {isOwner && ` Admins can add songs and manage stems — max 2 per board (${adminCount}/2 used).`}
           </p>
           <div className="row gap wrap">
-            <input placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} />
+            {byName && <input placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} />}
             <input
-              type="email" placeholder="Google email (optional)" value={email}
+              type="email" placeholder={byName ? 'Google email (optional)' : 'bassist@example.com'} value={email}
               onChange={(e) => setEmail(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && (name.trim() || email.trim()) && emailOk && add()}
             />

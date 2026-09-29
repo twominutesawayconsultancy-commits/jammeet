@@ -29,6 +29,9 @@ npm install
 npm run dev      # http://localhost:5173 (needs .env with the two vars)
 npm run build    # must pass before any change is called done
 ```
+Without the two env vars, `supabase` is a constant null and Vite drops most of the
+app, so a bare local build proves little. Verify with `VERCEL_ENV=preview npm run build`
+(Woodshed keys) or with dummy `VITE_SUPABASE_*` values.
 No test, lint, or CI setup exists yet (Phase 1 adds them).
 
 ## Layout
@@ -48,7 +51,7 @@ supabase/migration-002-profile-reconcile.sql   secure reconcile_profile (live si
 supabase/migration-003-owner-rating.sql        practice.rated_by + rate_for_member (owner rates for a member)
 supabase/migration-004-admin-edits.sql         admins edit boards; owner/admins moderate + edit notes (edit_comment)
 supabase/migration-005-gigs.sql                gigs, gig_answers (append-only), gig_songs, gig_notes. On Woodshed only; NOT yet on live
-supabase/migration-006-band-roster.sql         band people without accounts (placeholder emails), answers per membership,
+supabase/migration-006-band-roster.sql         boards.gigs_enabled per-board switch (Gigs only where on); band people without accounts (placeholder emails), answers per membership,
                                                chat-sourced answers (source/said_at/person_name). Needs 005. Woodshed only
 docs/AUDIT.md              technical audit + owner answers
 ```

@@ -16,7 +16,43 @@
 --     App answers always get said_at = now() (set by trigger; can't backdate).
 --   * person_name snapshots the name at insert, so history survives a member
 --     leaving the board (membership_id then becomes null).
+--   * boards.gigs_enabled (default false) switches the whole Gigs feature and
+--     add-by-name on per board. Only the database admin (SQL editor / service
+--     role) can flip it; board owners can't. Turn it on per board by id:
+--       update public.boards set gigs_enabled = true where id = '<board id>';
 -- ============================================================================
+
+alter table public.boards add column if not exists gigs_enabled boolean not null default false;
+
+-- Board owners/admins may edit their board, but not this switch.
+create or replace function public.guard_gigs_enabled()
+returns trigger language plpgsql set search_path = public
+as $$
+begin
+  if new.gigs_enabled is distinct from old.gigs_enabled
+     and current_user in ('authenticated', 'anon') then
+    raise exception 'Gigs can only be switched on by the app admin.';
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists trg_guard_gigs_enabled on public.boards;
+create trigger trg_guard_gigs_enabled
+  before update on public.boards
+  for each row execute function public.guard_gigs_enabled();
+
+create or replace function public.gigs_on(b uuid)
+returns boolean language sql stable security definer set search_path = public
+as $$ select coalesce((select gigs_enabled from boards where id = b), false); $$;
+revoke all on function public.gigs_on(uuid) from public, anon;
+grant execute on function public.gigs_on(uuid) to authenticated;
+
+-- New gigs only on boards with the switch on (replaces migration-005's policy).
+drop policy if exists "gigs insert" on public.gigs;
+create policy "gigs insert" on public.gigs
+  for insert to authenticated
+  with check (public.is_admin(board_id) and public.gigs_on(board_id)
+              and created_by = (select auth.uid()));
 
 alter table public.memberships add column if not exists display_name text;
 
@@ -119,6 +155,9 @@ begin
   if not public.is_admin(p_board) then
     raise exception 'Only the owner or an admin can add band members.';
   end if;
+  if not public.gigs_on(p_board) then
+    raise exception 'Adding members by name isn''t switched on for this board.';
+  end if;
   if p_role not in ('admin','member') then raise exception 'Role must be admin or member.'; end if;
   if p_role = 'admin' and not public.is_owner(p_board) then
     raise exception 'Only the owner can add admins.';
@@ -151,6 +190,9 @@ begin
   select * into mem from memberships where id = p_membership;
   if mem.id is null or not public.is_admin(mem.board_id) then
     raise exception 'Only the owner or an admin can edit band members.';
+  end if;
+  if not public.gigs_on(mem.board_id) then
+    raise exception 'Editing members by name isn''t switched on for this board.';
   end if;
   if mem.user_id is not null then
     raise exception 'This person has already joined; they manage their own name.';

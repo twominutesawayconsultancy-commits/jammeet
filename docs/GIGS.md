@@ -35,6 +35,29 @@ with a shared calendar on each Jam-Meet board:
   for others; nobody can update or delete answers.
 - `npm run build` passes. Not yet clicked through end-to-end in a browser.
 
+## Band roster + chat history (migration-006, Woodshed only)
+- **People without accounts.** Owner/admins add band members by name in Members;
+  email optional. No email → placeholder `<name>-<hex>@no-email.invalid` (can't be a
+  real address). Fix the name/email later (pencil icon); when that person signs in
+  with the Google email, `claim_invites()` links them and their answers follow.
+  RPCs: `add_band_person` (admins add members; only owner adds admins),
+  `update_band_person` (unjoined rows only).
+- **Answers per membership.** `gig_answers.membership_id` (user_id now optional).
+  A trigger fills `membership_id`/`user_id`/`person_name` and forces `said_at = now()`
+  for app answers, so members can't backdate. `person_name` keeps history readable if
+  someone leaves (membership_id → null).
+- **Chat answers.** `source = 'chat'`, `said_at` = when it was said in WhatsApp,
+  `note` = short quote ("Name: …" if someone else reported it). Only owner/admins
+  can insert them. Shown with an "in the chat" tag.
+- **Import flow (privacy).** Gigs tab → "Import from chat". The owner exports the
+  group, gives it to Claude with the in-app prompt (`CLAUDE_PROMPT`, GigImport.jsx),
+  pastes back the JSON, maps names to members, ticks gigs/answers, saves. The raw
+  chat never reaches Jam-Meet; re-importing skips answers already saved.
+  JSON shape = the one in the prompt (`gigs` map + `answers_from_chat`).
+- RLS tested on Woodshed (rolled-back transaction): admin adds people + chat answers;
+  admin can't add admins; member can't answer for others, can't write chat answers,
+  can't backdate, can't add/edit people; nobody can update answers; outsiders see nothing.
+
 ## Staging (Woodshed)
 - Vercel **preview** builds use the Woodshed Supabase project
   (`niluzclxingovirduisu`) — see `src/supabaseClient.js` (keyed on
@@ -65,16 +88,16 @@ with a shared calendar on each Jam-Meet board:
 
 ## Next steps (proposed, owner to prioritise)
 1. Owner tests the preview; fix whatever they hit.
-2. Before merging: apply migration-005 to **live** (owner's explicit OK), then
-   merge the branch. Order: SQL first, code second.
+2. Before merging: apply migration-005 then 006 to **live** (owner's explicit OK),
+   then merge the branch. Order: SQL first, code second.
 3. Realtime updates (Supabase channel on gigs/gig_answers) so answers appear
    without refresh.
 4. "Needs attention" view: gigs with open slots, lineup members answering
    Out/Maybe, same person on two gigs the same day.
 5. Calendar feed (.ics per member) so gigs show in phone calendars.
-6. WhatsApp import: upload a chat export → Claude API extracts gigs/changes →
-   owner reviews before anything is saved. Partial dates must be anchored to
-   the message date and flagged, never guessed.
+6. WhatsApp import v2: extract inside the app (edge function + Claude API key as a
+   Supabase secret) instead of the copy-paste step. v1 (manual Claude step + review
+   screen) is built.
 7. Storage: live bucket is ~809 MB of the free 1 GB; ~300 MB looks orphaned
    (replaced stems). A full band set (~30 songs × ~35 MB) needs Supabase Pro
    ($25/mo) or MP3 stems / Cloudflare R2.

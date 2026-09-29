@@ -98,6 +98,16 @@ async function filesFromDataTransfer(dt) {
   return out
 }
 
+/** Emails ending here are placeholders for band people added without one (migration-006). */
+export const isPlaceholderEmail = (email) => !!email && email.endsWith('@no-email.invalid')
+
+/** Best name for a membership row: their profile, the name the band gave them, or their email. */
+export function memberName(m) {
+  if (!m) return 'Someone'
+  return m.profiles?.display_name || m.display_name
+    || (isPlaceholderEmail(m.email) ? 'Unnamed' : m.email) || 'Someone'
+}
+
 export function initials(name = '?') {
   return name.trim().split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase() || '').join('')
 }
@@ -776,15 +786,15 @@ function BoardView({ boardId, songId, profile, notify, onBack, onOpenSong, onClo
           </button>
         </div>
         <div className="row gap">
-          <div className="member-dots" title={members.map((m) => m.profiles?.display_name || m.email).join(', ')}>
+          <div className="member-dots" title={members.map(memberName).join(', ')}>
             {members.slice(0, 6).map((m) => (
               <span
                 key={m.id}
                 className={`avatar sm ${m.user_id ? '' : 'pending'}`}
                 style={{ '--c': m.profiles?.color || '#39424e' }}
-                title={m.profiles?.display_name || `${m.email} (invited)`}
+                title={m.user_id ? memberName(m) : `${memberName(m)} (not joined yet)`}
               >
-                {initials(m.profiles?.display_name || m.email)}
+                {initials(memberName(m))}
               </span>
             ))}
           </div>
@@ -1106,11 +1116,23 @@ function NewSongModal({ boardId, onClose, onCreated, notify }) {
 /* ================================================================== */
 
 function MembersModal({ board, members, myRole, profile, refresh, onClose, onLeft, notify }) {
+  const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [role, setRole] = useState('member')
   const [busy, setBusy] = useState(false)
+  const [editId, setEditId] = useState(null)
   const isOwner = myRole === 'owner'
+  const canAdd = isOwner || myRole === 'admin'
   const adminCount = members.filter((m) => m.role === 'admin').length
+  const emailOk = !email.trim() || /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim())
+
+  const add = async () => {
+    setBusy(true)
+    try {
+      await api.addBandPerson(board.id, name, email, isOwner ? role : 'member')
+      setName(''); setEmail(''); refresh()
+    } catch (e) { notify(e.message) } finally { setBusy(false) }
+  }
 
   return (
     <Modal title="Band members" onClose={onClose}>
@@ -1118,68 +1140,81 @@ function MembersModal({ board, members, myRole, profile, refresh, onClose, onLef
         {members.map((m) => (
           <li key={m.id} className="member-row">
             <span className={`avatar ${m.user_id ? '' : 'pending'}`} style={{ '--c': m.profiles?.color || '#39424e' }}>
-              {initials(m.profiles?.display_name || m.email)}
+              {initials(memberName(m))}
             </span>
-            <div className="member-info">
-              <strong>{m.profiles?.display_name || m.email}</strong>
-              <span className="dim tiny">
-                {m.user_id ? (m.profiles?.instrument || m.email) : 'invited — joins on first sign-in'}
-              </span>
-            </div>
-            {isOwner && m.role !== 'owner' ? (
-              <div className="row gap">
-                <select
-                  value={m.role}
-                  onChange={async (e) => {
-                    try { await api.setMemberRole(m.id, e.target.value); refresh() }
-                    catch (err) { notify(err.message) }
-                  }}
-                >
-                  <option value="member">member</option>
-                  <option value="admin">admin</option>
-                </select>
-                <button className="icon-btn danger" title="Remove"
-                  onClick={async () => {
-                    if (!window.confirm(`Remove ${m.profiles?.display_name || m.email} from ${board.name}?`)) return
-                    try { await api.removeMember(m.id); refresh() } catch (err) { notify(err.message) }
-                  }}>
-                  <Trash2 size={14} />
-                </button>
+            {editId === m.id ? (
+              <PersonEditor member={m} notify={notify}
+                onDone={() => { setEditId(null); refresh() }} onCancel={() => setEditId(null)} />
+            ) : (
+              <div className="member-info">
+                <strong>{memberName(m)}</strong>
+                <span className="dim tiny">
+                  {m.user_id
+                    ? (m.profiles?.instrument || m.email)
+                    : isPlaceholderEmail(m.email)
+                      ? 'not joined · no email yet'
+                      : `not joined · joins when ${m.email} signs in`}
+                </span>
               </div>
-            ) : roleBadge(m.role)}
+            )}
+            {editId !== m.id && (
+              <div className="row gap">
+                {canAdd && !m.user_id && (
+                  <button className="icon-btn" title="Edit name / email" onClick={() => setEditId(m.id)}>
+                    <Pencil size={14} />
+                  </button>
+                )}
+                {isOwner && m.role !== 'owner' ? (
+                  <>
+                    <select
+                      value={m.role}
+                      onChange={async (e) => {
+                        try { await api.setMemberRole(m.id, e.target.value); refresh() }
+                        catch (err) { notify(err.message) }
+                      }}
+                    >
+                      <option value="member">member</option>
+                      <option value="admin">admin</option>
+                    </select>
+                    <button className="icon-btn danger" title="Remove"
+                      onClick={async () => {
+                        if (!window.confirm(`Remove ${memberName(m)} from ${board.name}? Their gig answers stay on record.`)) return
+                        try { await api.removeMember(m.id); refresh() } catch (err) { notify(err.message) }
+                      }}>
+                      <Trash2 size={14} />
+                    </button>
+                  </>
+                ) : roleBadge(m.role)}
+              </div>
+            )}
           </li>
         ))}
       </ul>
 
-      {isOwner && (
+      {canAdd && (
         <div className="invite-box">
-          <h4><UserPlus size={14} /> Invite by email</h4>
+          <h4><UserPlus size={14} /> Add a band member</h4>
           <p className="dim tiny">
-            They'll see this board the first time they sign in with that Google
-            account. Admins can add songs and manage stems — max 2 per board
-            ({adminCount}/2 used).
+            Email is optional: add the name now and fill in their Google email later.
+            They see this board the first time they sign in with that email, and
+            their gig answers come with them.
+            {isOwner && ` Admins can add songs and manage stems — max 2 per board (${adminCount}/2 used).`}
           </p>
-          <div className="row gap">
+          <div className="row gap wrap">
+            <input placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} />
             <input
-              type="email" placeholder="bassist@example.com" value={email}
+              type="email" placeholder="Google email (optional)" value={email}
               onChange={(e) => setEmail(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && email.includes('@') && document.getElementById('invite-go')?.click()}
+              onKeyDown={(e) => e.key === 'Enter' && (name.trim() || email.trim()) && emailOk && add()}
             />
-            <select value={role} onChange={(e) => setRole(e.target.value)}>
-              <option value="member">member</option>
-              <option value="admin" disabled={adminCount >= 2}>admin</option>
-            </select>
-            <button
-              id="invite-go" className="btn btn-primary" disabled={busy || !email.includes('@')}
-              onClick={async () => {
-                setBusy(true)
-                try {
-                  await api.inviteMember(board.id, email, role)
-                  setEmail(''); refresh()
-                } catch (e) { notify(e.message) } finally { setBusy(false) }
-              }}
-            >
-              Invite
+            {isOwner && (
+              <select value={role} onChange={(e) => setRole(e.target.value)}>
+                <option value="member">member</option>
+                <option value="admin" disabled={adminCount >= 2}>admin</option>
+              </select>
+            )}
+            <button className="btn btn-primary" disabled={busy || !emailOk || !(name.trim() || email.trim())} onClick={add}>
+              Add
             </button>
           </div>
         </div>
@@ -1201,6 +1236,30 @@ function MembersModal({ board, members, myRole, profile, refresh, onClose, onLef
         </div>
       )}
     </Modal>
+  )
+}
+
+/** Inline editor for someone who hasn't joined yet: name + (real) email. */
+function PersonEditor({ member, notify, onDone, onCancel }) {
+  const [name, setName] = useState(member.display_name || '')
+  const [email, setEmail] = useState(isPlaceholderEmail(member.email) ? '' : member.email)
+  const [busy, setBusy] = useState(false)
+  const emailOk = !email.trim() || /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim())
+  const save = async () => {
+    setBusy(true)
+    try { await api.updateBandPerson(member.id, name, email); onDone() }
+    catch (e) { notify(e.message); setBusy(false) }
+  }
+  return (
+    <div className="member-info person-edit">
+      <input autoFocus placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} />
+      <input type="email" placeholder="Google email (optional)" value={email}
+        onChange={(e) => setEmail(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && emailOk && save()} />
+      <div className="row gap">
+        <button className="btn btn-ghost" onClick={onCancel}>Cancel</button>
+        <button className="btn btn-primary" disabled={busy || !emailOk} onClick={save}>Save</button>
+      </div>
+    </div>
   )
 }
 

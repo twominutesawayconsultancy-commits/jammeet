@@ -37,6 +37,7 @@ index.html                 shell + Google Fonts; loads /src/main.jsx
 src/main.jsx               React entry (StrictMode)
 src/App.jsx                most of the UI: auth, boards, lanes, console, modals
 src/Gigs.jsx               board Gigs tab: calendar, In/Maybe/Out answers (append-only log), setlists, gig notes
+src/GigImport.jsx          owner/admin: review + save gigs/answers Claude extracted from a WhatsApp export
 src/styles.css             dark studio/console design system
 src/supabaseClient.js      client from env vars (or null)
 src/lib/api.js             ALL database + storage calls
@@ -47,6 +48,8 @@ supabase/migration-002-profile-reconcile.sql   secure reconcile_profile (live si
 supabase/migration-003-owner-rating.sql        practice.rated_by + rate_for_member (owner rates for a member)
 supabase/migration-004-admin-edits.sql         admins edit boards; owner/admins moderate + edit notes (edit_comment)
 supabase/migration-005-gigs.sql                gigs, gig_answers (append-only), gig_songs, gig_notes. On Woodshed only; NOT yet on live
+supabase/migration-006-band-roster.sql         band people without accounts (placeholder emails), answers per membership,
+                                               chat-sourced answers (source/said_at/person_name). Needs 005. Woodshed only
 docs/AUDIT.md              technical audit + owner answers
 ```
 
@@ -64,7 +67,10 @@ docs/AUDIT.md              technical audit + owner answers
   and any note (edit via `edit_comment`, delete). Owner only: delete board/songs, invite.
   Owner membership is created by the `handle_new_board` trigger; profiles by
   `handle_new_user` (plus client `ensureProfile`). Invites are `memberships` rows with
-  null `user_id`, claimed by `claim_invites()` on login.
+  null `user_id`, claimed by `claim_invites()` on login. Since migration-006 owner +
+  admins add band people by name (`add_band_person`); no email → placeholder
+  `…@no-email.invalid`, fixed later via `update_band_person`. Use `memberName(m)`
+  (App.jsx) for display, never raw `m.email`.
 - **Stems:** `source='demo'` stems store no audio — synthesized in-browser from the
   song's key/BPM/signature (`synthDemoStems`). `source='upload'` stems live in the
   private `stems` bucket at `<boardId>/<songId>/<stemId>-<rev>.<ext>` (older uploads
@@ -97,6 +103,9 @@ docs/AUDIT.md              technical audit + owner answers
 - The owner has historically committed via GitHub web upload; check for stray files.
 
 ## Guardrails
+- **Band chat content never goes in this repo** (it's public): no exports, quotes,
+  phone numbers or extracted gig JSON. That data lives only in the private Supabase
+  tables (members-only RLS) and the owner's private Claude Project.
 - **Never push to `main`.** Work on a branch; merge only on explicit owner approval.
 - **Staging = Woodshed.** Vercel PREVIEW builds use the Woodshed test project
   (`niluzclxingovirduisu`, schema mirrors live) via `src/supabaseClient.js`; they show a

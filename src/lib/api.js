@@ -169,11 +169,29 @@ export async function fetchBoardBundle(boardId) {
 
 /* ---------------- memberships ---------------- */
 
-export async function inviteMember(boardId, email, role) {
-  const { error } = await supabase.rpc('invite_member', {
+/**
+ * Add someone to the band (migration-006). Email is optional: without one the
+ * row gets a placeholder address the owner/admins can fix later. When the
+ * person signs in with that Google email, claim_invites links them.
+ * Owner may add admins; admins add members only (checked server-side).
+ */
+export async function addBandPerson(boardId, name, email, role = 'member') {
+  const { data, error } = await supabase.rpc('add_band_person', {
     p_board: boardId,
-    p_email: email.trim().toLowerCase(),
+    p_name: name?.trim() || null,
+    p_email: email?.trim().toLowerCase() || null,
     p_role: role,
+  })
+  throwIf(error)
+  return data
+}
+
+/** Fix the name/email of someone who hasn't signed in yet (owner/admin). */
+export async function updateBandPerson(membershipId, name, email) {
+  const { error } = await supabase.rpc('update_band_person', {
+    p_membership: membershipId,
+    p_name: name?.trim() || null,
+    p_email: email?.trim().toLowerCase() || null,
   })
   throwIf(error)
 }
@@ -360,7 +378,8 @@ export async function fetchGigs(boardId) {
   throwIf(error)
   return (data || []).map((g) => ({
     ...g,
-    gig_answers: (g.gig_answers || []).sort((a, z) => a.created_at.localeCompare(z.created_at)),
+    gig_answers: (g.gig_answers || []).sort((a, z) =>
+      a.said_at.localeCompare(z.said_at) || a.created_at.localeCompare(z.created_at)),
     gig_songs: (g.gig_songs || []).sort((a, z) => a.position - z.position),
   }))
 }
@@ -391,12 +410,25 @@ export async function deleteGig(gigId) {
 /**
  * Record an availability answer. Answers are an append-only log: this always
  * inserts, never overwrites, so every change stays on record with its time.
- * `setBy` is the signed-in user (owner/admin may answer for a member).
+ * `membershipId` is whose answer it is (anyone on the board, joined or not);
+ * `setBy` is the signed-in user (owner/admin may answer for others).
  */
-export async function answerGig(gigId, userId, answer, note, setBy) {
+export async function answerGig(gigId, membershipId, answer, note, setBy) {
   const { error } = await supabase
     .from('gig_answers')
-    .insert({ gig_id: gigId, user_id: userId, answer, note: note || null, set_by: setBy })
+    .insert({ gig_id: gigId, membership_id: membershipId, answer, note: note || null, set_by: setBy })
+  throwIf(error)
+}
+
+/**
+ * Owner/admin: save answers taken from a WhatsApp chat export. Each row:
+ * { gig_id, membership_id, answer, note, said_at }. Stored with source 'chat'.
+ */
+export async function addChatAnswers(rows, setBy) {
+  if (!rows.length) return
+  const { error } = await supabase
+    .from('gig_answers')
+    .insert(rows.map((r) => ({ ...r, source: 'chat', set_by: setBy })))
   throwIf(error)
 }
 

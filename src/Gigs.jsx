@@ -3,10 +3,11 @@
 // Data: supabase/migration-005-gigs.sql. All calls go through lib/api.js.
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import * as api from './lib/api'
-import { Modal, initials, songReadiness, LANES } from './App.jsx'
+import { Modal, initials, songReadiness, LANES, memberName } from './App.jsx'
+import GigImportModal from './GigImport.jsx'
 import {
   ChevronLeft, ChevronRight, Plus, Pencil, Trash2, Send, X, CalendarDays,
-  ListMusic, MessageSquare, History, ArrowUp, ArrowDown, Play,
+  ListMusic, MessageSquare, History, ArrowUp, ArrowDown, Play, FileUp,
 } from 'lucide-react'
 
 const STATUS = {
@@ -24,18 +25,23 @@ const fmtDay = (k, opts) => parseDay(k).toLocaleDateString(undefined, opts)
 const fmtStamp = (iso) => new Date(iso).toLocaleString(undefined, {
   day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit',
 })
-const nameOf = (m) => m?.profiles?.display_name || m?.email || 'Someone'
+const nameOf = memberName
+
+/** Whose answer a log row is: the membership, or the saved name if they've left. */
+const answerKey = (a) => a.membership_id || `gone:${a.person_name || a.id}`
 
 /**
- * Per member: current answer (latest log row), the one before it, and the full
- * history. Members who never answered are left out of the map.
+ * Per person (keyed by membership id): current answer (latest by when it was
+ * said), the one before it, and the full history. People who never answered
+ * are left out of the map. Rows arrive sorted by said_at from api.fetchGigs.
  */
 function answerState(gig) {
   const map = new Map()
   for (const a of gig.gig_answers || []) {
-    const e = map.get(a.user_id) || { history: [] }
+    const k = answerKey(a)
+    const e = map.get(k) || { history: [] }
     e.history.push(a)
-    map.set(a.user_id, e)
+    map.set(k, e)
   }
   for (const e of map.values()) {
     e.current = e.history[e.history.length - 1]
@@ -69,7 +75,9 @@ export default function GigsView({ board, members, songs, profile, myRole, notif
   const [openId, setOpenId] = useState(null)
   const [editing, setEditing] = useState(null) // null | 'new' | gig
   const [onlyMine, setOnlyMine] = useState(false)
+  const [importing, setImporting] = useState(false)
   const canAdmin = myRole === 'owner' || myRole === 'admin'
+  const myMembership = members.find((m) => m.user_id === profile.id)
 
   const load = useCallback(() => {
     api.fetchGigs(board.id)
@@ -102,7 +110,7 @@ export default function GigsView({ board, members, songs, profile, myRole, notif
   if (!gigs) return <div className="dim gigs-empty">Loading gigs…</div>
 
   const isMine = (g) => {
-    const e = answerState(g).get(profile.id)
+    const e = answerState(g).get(myMembership?.id)
     return e && e.current.answer !== 'out'
   }
   const visible = onlyMine ? gigs.filter(isMine) : gigs
@@ -137,6 +145,11 @@ export default function GigsView({ board, members, songs, profile, myRole, notif
             <button className={!onlyMine ? 'on' : ''} onClick={() => setOnlyMine(false)}>Everyone</button>
             <button className={onlyMine ? 'on' : ''} onClick={() => setOnlyMine(true)}>My gigs</button>
           </div>
+          {canAdmin && (
+            <button className="btn btn-ghost" onClick={() => setImporting(true)} title="Add gigs and answers from a WhatsApp chat export">
+              <FileUp size={15} /> Import from chat
+            </button>
+          )}
           {canAdmin && (
             <button className="btn btn-primary" onClick={() => setEditing('new')}><Plus size={15} /> Add gig</button>
           )}
@@ -185,7 +198,7 @@ export default function GigsView({ board, members, songs, profile, myRole, notif
         )}
         {monthGigs.map((g) => {
           const c = gigCounts(g)
-          const mine = answerState(g).get(profile.id)?.current?.answer
+          const mine = answerState(g).get(myMembership?.id)?.current?.answer
           return (
             <button key={g.id} className="grow" onClick={() => setOpenId(g.id)}>
               <span className="grow-date">
@@ -221,6 +234,17 @@ export default function GigsView({ board, members, songs, profile, myRole, notif
           onClose={() => setOpenId(null)}
           onEdit={() => setEditing(openGig)}
           onOpenSong={onOpenSong}
+        />
+      )}
+      {importing && (
+        <GigImportModal
+          board={board}
+          members={members}
+          gigs={gigs}
+          profile={profile}
+          notify={notify}
+          onClose={() => setImporting(false)}
+          onDone={() => { setImporting(false); load() }}
         />
       )}
       {editing && (
@@ -310,11 +334,12 @@ function GigFormModal({ gig, boardId, profile, notify, onClose, onSaved }) {
 /* ================================================================== */
 
 function GigModal({ gig, members, songs, profile, canAdmin, notify, onChanged, onClose, onEdit, onOpenSong }) {
-  const joined = members.filter((m) => m.user_id)
-  const byId = useMemo(() => Object.fromEntries(members.filter((m) => m.user_id).map((m) => [m.user_id, m])), [members])
+  const byId = useMemo(() => Object.fromEntries(members.map((m) => [m.id, m])), [members])
+  const byUser = useMemo(() => Object.fromEntries(members.filter((m) => m.user_id).map((m) => [m.user_id, m])), [members])
+  const myMembership = byUser[profile.id]
   const state = answerState(gig)
   const [expanded, setExpanded] = useState(null)
-  const [who, setWho] = useState(profile.id)
+  const [who, setWho] = useState(myMembership?.id)
   const [pick, setPick] = useState(null)
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
@@ -324,8 +349,8 @@ function GigModal({ gig, members, songs, profile, canAdmin, notify, onChanged, o
   useEffect(() => { setPick(whoState?.current?.answer || null); setNote('') }, [who]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const order = { in: 0, maybe: 1, out: 2 }
-  const people = joined
-    .map((m) => ({ m, e: state.get(m.user_id) }))
+  const people = members
+    .map((m) => ({ m, e: state.get(m.id) }))
     .sort((a, b) => (a.e ? order[a.e.current.answer] : 3) - (b.e ? order[b.e.current.answer] : 3))
 
   const saveAnswer = async () => {
@@ -367,10 +392,11 @@ function GigModal({ gig, members, songs, profile, canAdmin, notify, onChanged, o
           <h3>Who's in</h3>
           <div className="gpeople">
             {people.map(({ m, e }) => (
-              <button key={m.user_id}
-                className={`gperson ${e ? `ans-${e.current.answer}` : 'ans-none'} ${expanded === m.user_id ? 'open' : ''}`}
-                onClick={() => setExpanded(expanded === m.user_id ? null : m.user_id)}
-                aria-expanded={expanded === m.user_id}>
+              <button key={m.id}
+                className={`gperson ${e ? `ans-${e.current.answer}` : 'ans-none'} ${m.user_id ? '' : 'not-joined'} ${expanded === m.id ? 'open' : ''}`}
+                onClick={() => setExpanded(expanded === m.id ? null : m.id)}
+                aria-expanded={expanded === m.id}
+                title={m.user_id ? undefined : 'Not joined Jam-Meet yet'}>
                 <span className="avatar sm" style={{ '--c': m.profiles?.color || '#39424e' }}>{initials(nameOf(m))}</span>
                 <span>{nameOf(m)}</span>
                 <span className="gperson-ans">{e ? ANSWER[e.current.answer] : 'No answer'}</span>
@@ -382,7 +408,7 @@ function GigModal({ gig, members, songs, profile, canAdmin, notify, onChanged, o
             <div className="gtrail">
               <strong>{nameOf(byId[expanded])}'s answers for this gig</strong>
               {state.get(expanded)
-                ? <AnswerList rows={[...state.get(expanded).history].reverse()} byId={byId} showName={false} />
+                ? <AnswerList rows={[...state.get(expanded).history].reverse()} byId={byId} byUser={byUser} showName={false} />
                 : <p className="dim tiny">No answer yet.</p>}
             </div>
           )}
@@ -393,8 +419,8 @@ function GigModal({ gig, members, songs, profile, canAdmin, notify, onChanged, o
                 <label className="row gap tiny">
                   <span className="dim">Answer for</span>
                   <select value={who} onChange={(e) => setWho(e.target.value)}>
-                    {joined.map((m) => (
-                      <option key={m.user_id} value={m.user_id}>{m.user_id === profile.id ? 'Me' : nameOf(m)}</option>
+                    {members.map((m) => (
+                      <option key={m.id} value={m.id}>{m.user_id === profile.id ? 'Me' : nameOf(m)}{m.user_id ? '' : ' (not joined)'}</option>
                     ))}
                   </select>
                 </label>
@@ -412,7 +438,7 @@ function GigModal({ gig, members, songs, profile, canAdmin, notify, onChanged, o
               placeholder="Reason or condition (optional), e.g. only if we're back by 11pm" />
             <div className="row spread">
               <span className="dim tiny">Every change is kept with its time. Nothing is overwritten.</span>
-              <button className="btn btn-primary" disabled={busy || !pick} onClick={saveAnswer}>Save answer</button>
+              <button className="btn btn-primary" disabled={busy || !pick || !who} onClick={saveAnswer}>Save answer</button>
             </div>
           </div>
         </section>
@@ -457,7 +483,7 @@ function GigModal({ gig, members, songs, profile, canAdmin, notify, onChanged, o
         <h3><History size={14} /> Answer log · who said what, when</h3>
         {log.length === 0
           ? <p className="dim tiny">No answers yet.</p>
-          : <AnswerList rows={log} byId={byId} showName />}
+          : <AnswerList rows={log} byId={byId} byUser={byUser} showName />}
       </section>
 
       <GigNotes gig={gig} profile={profile} canAdmin={canAdmin} notify={notify} />
@@ -465,19 +491,20 @@ function GigModal({ gig, members, songs, profile, canAdmin, notify, onChanged, o
   )
 }
 
-function AnswerList({ rows, byId, showName }) {
+function AnswerList({ rows, byId, byUser, showName }) {
   return (
     <ol className="glog">
       {rows.map((a) => {
-        const person = byId[a.user_id]
-        const setter = a.set_by && a.set_by !== a.user_id ? byId[a.set_by] : null
+        const person = byId[a.membership_id]
+        const setter = a.source !== 'chat' && a.set_by && a.set_by !== a.user_id ? byUser[a.set_by] : null
         return (
           <li key={a.id}>
             <span className={`ans ans-${a.answer}`}>{ANSWER[a.answer]}</span>
             <span>
               <span className="dim tiny">
-                {showName && <b className="glog-name">{nameOf(person)}</b>}
-                {showName && ' · '}{fmtStamp(a.created_at)}
+                {showName && <b className="glog-name">{person ? nameOf(person) : (a.person_name || 'Someone')}</b>}
+                {showName && ' · '}{fmtStamp(a.said_at || a.created_at)}
+                {a.source === 'chat' && <span className="src-chat" title="Taken from the WhatsApp chat">in the chat</span>}
                 {setter && ` · set by ${nameOf(setter)}`}
               </span>
               {a.note && <span className="glog-note">“{a.note}”</span>}

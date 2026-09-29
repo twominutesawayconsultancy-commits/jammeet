@@ -10,6 +10,7 @@ not-yet-rated counts as 0 (`songReadiness(song, members)`).
 > ⚠️ **This app is LIVE with real users.** Protecting the running app beats every
 > other goal. See Guardrails.
 
+See `docs/GIGS.md` for the Gigs feature (calendar, availability, setlists): state, staging, next steps.
 See `docs/AUDIT.md` for the current technical audit, open owner questions, and the
 proposed Phase 1 sequence.
 

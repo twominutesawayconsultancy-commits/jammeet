@@ -102,7 +102,7 @@ function findMember(members, name) {
 
 /**
  * Everyone who matters for a gig, one row per board member:
- * status = their latest answer, or 'listed' (named in the lineup, no answer
+ * status = their latest answer, or 'listed' (shown as "Confirmed on call": named in the lineup, no answer
  * yet), or 'none'. `clash` = in the lineup but answered Maybe/Out.
  */
 function peopleFor(gig, members) {
@@ -129,7 +129,7 @@ function gigCounts(gig, members = []) {
 }
 const countLine = (c) => [
   c.in && `${c.in} in`, c.maybe && `${c.maybe} maybe`, c.out && `${c.out} out`,
-  c.listed && `${c.listed} listed`,
+  c.listed && `${c.listed} confirmed on call`,
 ].filter(Boolean).join(' · ') || 'no answers yet'
 
 /** Title without repeated or placeholder parts ("Wedding · Wedding · 5-piece" → "Wedding · 5-piece"). */
@@ -555,10 +555,10 @@ function GigModal({ gig, allGigs, members, songs, profile, canAdmin, notify, onC
             <span className="dim tiny">{role || '\u00a0'}</span>
           </span>
           <span className="grow-p-ans">
-            <span className={`ans ans-${status}`}>{cur ? ANSWER[cur.answer] : status === 'listed' ? 'Listed' : 'No answer'}</span>
+            <span className={`ans ans-${status}`}>{cur ? ANSWER[cur.answer] : status === 'listed' ? 'Confirmed on call' : 'No answer'}</span>
             <span className="dim tiny">
               {cur ? `${fmtStamp(cur.said_at || cur.created_at)}${cur.source === 'chat' ? ' · chat' : ''}`
-                : status === 'listed' ? 'in lineup, not confirmed' : ''}
+                : ''}
             </span>
           </span>
         </button>
@@ -566,7 +566,7 @@ function GigModal({ gig, allGigs, members, songs, profile, canAdmin, notify, onC
         {open && (
           <div className="gtrail">
             {e ? <AnswerList rows={[...e.history].reverse()} byId={byId} byUser={byUser} showName={false} />
-              : <p className="dim tiny">{status === 'listed' ? 'Named in the lineup. No answer recorded yet.' : 'No answer yet.'}</p>}
+              : <p className="dim tiny">{status === 'listed' ? 'In the bandleader\'s lineup, confirmed on a call or in person. Nothing recorded in the app yet.' : 'No answer yet.'}</p>}
           </div>
         )}
       </li>
@@ -590,7 +590,7 @@ function GigModal({ gig, allGigs, members, songs, profile, canAdmin, notify, onC
           <div className="ghero-tally">
             {counts.in > 0 && <span className="ans ans-in">{counts.in} in</span>}
             {counts.maybe > 0 && <span className="ans ans-maybe">{counts.maybe} maybe</span>}
-            {counts.listed > 0 && <span className="ans ans-listed">{counts.listed} listed</span>}
+            {counts.listed > 0 && <span className="ans ans-listed">{counts.listed} confirmed on call</span>}
             {counts.out > 0 && <span className="ans ans-out">{counts.out} out</span>}
             {!counts.in && !counts.maybe && !counts.listed && !counts.out && <span className="dim tiny">No answers yet</span>}
           </div>
@@ -637,6 +637,9 @@ function GigModal({ gig, allGigs, members, songs, profile, canAdmin, notify, onC
             </li>
           ))}
         </ul>
+        {counts.listed > 0 && (
+          <p className="dim tiny gnote">Confirmed on call = the bandleader confirmed them by phone or in person. They haven't answered in the app yet.</p>
+        )}
         {others.length > 0 && (
           <>
             {lineup.length > 0 && <h4 className="gsub">Also answered</h4>}

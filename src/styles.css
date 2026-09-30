@@ -859,3 +859,6 @@ input[type='date']:focus, textarea:focus { border-color: var(--teal); outline: n
 .gpill.st-played, .gpill.st-unconfirmed { opacity: .7; }
 .struck { text-decoration: line-through; color: var(--dim); }
 .gstale { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; padding: 8px 12px; border-radius: 10px; font-size: 13.5px; background: color-mix(in srgb, var(--teal) 14%, transparent); border: 1px solid color-mix(in srgb, var(--teal) 40%, transparent); }
+.gnote { margin: 2px 0 8px; }
+.grow-p-ans { flex: none; max-width: 60%; }
+.grow-p-who b, .grow-p-who span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

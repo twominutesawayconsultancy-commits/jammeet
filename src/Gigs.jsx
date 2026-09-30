@@ -465,7 +465,6 @@ function GigModal({ gig, allGigs, members, songs, profile, canAdmin, notify, onC
   const byUser = useMemo(() => Object.fromEntries(members.filter((m) => m.user_id).map((m) => [m.user_id, m])), [members])
   const myMembership = byUser[profile.id]
   const [expanded, setExpanded] = useState(null)
-  const [showAll, setShowAll] = useState(false)
   const [editSet, setEditSet] = useState(false)
 
   const d = parseDetails(gig.details)
@@ -608,9 +607,9 @@ function GigModal({ gig, allGigs, members, songs, profile, canAdmin, notify, onC
 
       {d.summary.length > 0 && <p className="gsummary">{d.summary.join(' ')}</p>}
 
-      {d.facts.length > 0 && (
+      {d.facts.some((f) => f.label !== 'Poll') && (
         <div className="gchips">
-          {d.facts.map((f, i) => {
+          {d.facts.filter((f) => f.label !== 'Poll').map((f, i) => {
             const Icon = factIcon[f.label] || CalendarDays
             return <span key={i} className="gchip" title={f.label}><Icon size={13} /><span><i>{f.label}</i> {f.value}</span></span>
           })}
@@ -647,16 +646,17 @@ function GigModal({ gig, allGigs, members, songs, profile, canAdmin, notify, onC
           </>
         )}
         {silent.length > 0 && (
-          <>
-            <button className="btn btn-ghost tiny-btn" onClick={() => setShowAll(!showAll)}>
-              {showAll ? 'Hide' : 'Show'} {silent.length} who haven't answered
-            </button>
-            {showAll && <ul className="gpeople-rows">{silent.map(personRow)}</ul>}
-          </>
+          <p className="gsilent">
+            <span className="dim tiny">Not answered yet ({silent.length}):</span>{' '}
+            {silent.map((p) => nameOf(p.m)).join(', ')}
+          </p>
         )}
         <AnswerBox gig={gig} members={members} byUser={byUser} myMembership={myMembership} profile={profile}
           canAdmin={canAdmin} notify={notify} onSaved={(mid) => { setExpanded(mid); onChanged() }} />
       </section>
+
+      <PollCard gig={gig} poll={d.facts.find((f) => f.label === 'Poll')} members={members} profile={profile}
+        canAdmin={canAdmin} notify={notify} onChanged={onChanged} />
 
       {d.schedule.length > 0 && (
         <section className="panel">
@@ -735,6 +735,110 @@ function GigModal({ gig, allGigs, members, songs, profile, canAdmin, notify, onC
 
       <GigNotes gig={gig} profile={profile} canAdmin={canAdmin} notify={notify} />
     </Modal>
+  )
+}
+
+/*
+ * WhatsApp poll with names. Exports only carry vote counts, so owner/admins
+ * copy the names from WhatsApp (poll → View votes). Each vote is saved as a
+ * chat answer whose note starts with POLL_NOTE, dated to the poll's day.
+ */
+const POLL_NOTE = 'WhatsApp poll'
+function pollFacts(gig, poll) {
+  const m = poll?.value.match(/(\d+)\s*available\s*·\s*(\d+)\s*no\s*\((\d{1,2})\s+([A-Za-z]{3})/i)
+  if (!m) return null
+  const gd = parseDay(gig.gig_date)
+  let day = new Date(`${m[3]} ${m[4]} ${gd.getFullYear()} 12:00`)
+  if (Number.isNaN(day.getTime())) day = new Date()
+  else if (day > gd) day.setFullYear(day.getFullYear() - 1)
+  return { yes: +m[1], no: +m[2], on: `${m[3]} ${m[4]}`, at: day.toISOString() }
+}
+
+function PollCard({ gig, poll, members, profile, canAdmin, notify, onChanged }) {
+  const facts = pollFacts(gig, poll)
+  const [editing, setEditing] = useState(false)
+  const [votes, setVotes] = useState({})
+  const [busy, setBusy] = useState(false)
+  if (!facts) return null
+
+  // Latest poll vote per person (their other answers don't count here).
+  const recorded = {}
+  for (const a of gig.gig_answers || []) {
+    if (a.source === 'chat' && a.note?.startsWith(POLL_NOTE) && a.membership_id) recorded[a.membership_id] = a.answer
+  }
+  const names = (ans) => members.filter((m) => recorded[m.id] === ans).map(nameOf)
+  const yesNames = names('in'), noNames = names('out')
+  const missingYes = Math.max(0, facts.yes - yesNames.length), missingNo = Math.max(0, facts.no - noNames.length)
+
+  const open = () => { setVotes({ ...recorded }); setEditing(true) }
+  const pickedYes = Object.values(votes).filter((v) => v === 'in').length
+  const pickedNo = Object.values(votes).filter((v) => v === 'out').length
+  const save = async () => {
+    const rows = Object.entries(votes).filter(([mid, v]) => v && v !== recorded[mid]).map(([mid, v]) => ({
+      gig_id: gig.id, membership_id: mid, answer: v, said_at: facts.at,
+      note: `${POLL_NOTE} (${facts.on}): voted ${v === 'in' ? 'Available' : 'No'}`,
+    }))
+    if (!rows.length) { setEditing(false); return }
+    setBusy(true)
+    try { await api.addChatAnswers(rows, profile.id); setEditing(false); onChanged() }
+    catch (e) { notify(e.message) } finally { setBusy(false) }
+  }
+
+  return (
+    <section className="panel gpoll">
+      <h3><BarChart3 size={14} /> WhatsApp poll <span className="dim tiny">· {facts.on}</span></h3>
+      {!editing ? (
+        <>
+          <div className="gpoll-row">
+            <span className="ans ans-in">{facts.yes} available</span>
+            <span className="gpoll-names">
+              {yesNames.join(', ')}{yesNames.length && missingYes ? ' · ' : ''}
+              {missingYes > 0 && <span className="dim">{missingYes} not named yet</span>}
+              {!facts.yes && <span className="dim">—</span>}
+            </span>
+          </div>
+          <div className="gpoll-row">
+            <span className="ans ans-out">{facts.no} no</span>
+            <span className="gpoll-names">
+              {noNames.join(', ')}{noNames.length && missingNo ? ' · ' : ''}
+              {missingNo > 0 && <span className="dim">{missingNo} not named yet</span>}
+              {!facts.no && <span className="dim">—</span>}
+            </span>
+          </div>
+          {(missingYes > 0 || missingNo > 0) && (
+            <p className="dim tiny">WhatsApp exports only keep the counts. {canAdmin ? 'Open the poll in WhatsApp → View votes, then add the names here.' : 'The owner or an admin can add the names.'}</p>
+          )}
+          {canAdmin && (
+            <button className="btn btn-ghost tiny-btn" onClick={open}><Pencil size={13} /> {yesNames.length || noNames.length ? 'Edit names' : 'Add names from WhatsApp'}</button>
+          )}
+        </>
+      ) : (
+        <>
+          <p className="dim tiny">In WhatsApp: open the poll → <b>View votes</b>. Tick each person here.</p>
+          <ul className="gpoll-edit">
+            {members.map((m) => (
+              <li key={m.id}>
+                <span>{nameOf(m)}</span>
+                <span className="seg seg-3">
+                  {[['in', 'Available'], ['out', 'No'], ['', '—']].map(([v, l]) => (
+                    <button key={l} className={`ans-btn ${v ? `ans-${v}` : ''} ${(votes[m.id] || '') === v ? 'on' : ''}`}
+                      disabled={!!recorded[m.id] && !v} title={recorded[m.id] && !v ? 'Saved votes stay on record; pick the other option to change it' : undefined}
+                      onClick={() => setVotes({ ...votes, [m.id]: v })}>{l}</button>
+                  ))}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <p className={`tiny ${pickedYes > facts.yes || pickedNo > facts.no ? 'gwarn' : 'dim'}`}>
+            Ticked {pickedYes} available (poll: {facts.yes}) · {pickedNo} no (poll: {facts.no})
+          </p>
+          <div className="modal-actions">
+            <button className="btn btn-ghost" onClick={() => setEditing(false)}>Cancel</button>
+            <button className="btn btn-primary" disabled={busy} onClick={save}>Save votes</button>
+          </div>
+        </>
+      )}
+    </section>
   )
 }
 

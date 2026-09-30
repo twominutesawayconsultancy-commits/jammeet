@@ -94,6 +94,11 @@ confirmed as Played, past tentative as Unconfirmed; `gigLine` shows named answer
 else the WhatsApp poll counts ("names not recorded"), else "No answers yet";
 cancelled gigs show no counts. The Gigs tab shows "A newer version… Reload" when
 the deployed bundle differs from the one open (phones keep old copies).
+WhatsApp poll card (`PollCard`, Gigs.jsx): exports only carry vote counts, so
+owner/admins copy names from WhatsApp (poll → View votes) with Available/No ticks.
+Each vote is a chat answer dated to the poll day, note starting "WhatsApp poll (d Mon):
+voted …"; the card shows named voters and how many are still unnamed. People who
+haven't answered are one compact "Not answered yet (n): …" line, not rows.
 No schema: `parseDetails` (Gigs.jsx) reads labelled lines in `gigs.details`
 (`Lineup:`, `Open:`, `Travel:`, `Dress:`, `Venue:`, `Poll:`, `Needs check:`, indented
 `Schedule:` "time — what" and `From the chat:` blocks); unlabelled lines = summary.

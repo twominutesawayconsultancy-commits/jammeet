@@ -26,6 +26,7 @@ const fmtStamp = (iso) => new Date(iso).toLocaleString(undefined, {
   day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit',
 })
 const nameOf = memberName
+const fmtShort = (iso) => new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
 
 /** Whose answer a log row is: the membership, or the saved name if they've left. */
 const answerKey = (a) => a.membership_id || `gone:${a.person_name || a.id}`
@@ -51,14 +52,68 @@ function answerState(gig) {
   return map
 }
 
-function gigCounts(gig) {
-  const c = { in: 0, maybe: 0, out: 0, changed: 0 }
-  for (const e of answerState(gig).values()) {
-    c[e.current.answer]++
-    if (e.changedFrom) c.changed++
+/**
+ * Split a gig's details text into the lineup, the "From the chat" notes and
+ * everything else (timings, dress, travel…). The chat importer writes
+ * "Lineup: A (vocals), B (guitar)" and an indented "From the chat:" block;
+ * the lineup is shown in "Who's in", so it's left out of the details text.
+ */
+function splitDetails(details) {
+  const lineup = [], chat = [], rest = []
+  let inChat = false
+  for (const line of (details || '').split('\n')) {
+    if (inChat && /^\s+\S/.test(line)) { chat.push(line.trim()); continue }
+    inChat = false
+    const lu = line.match(/^Lineup:\s*(.+)$/)
+    if (lu) {
+      for (const part of lu[1].split(/,\s*/)) {
+        const m = part.match(/^(.*?)\s*(?:\(([^)]*)\))?$/)
+        if (m && m[1]) lineup.push({ name: m[1].trim(), role: m[2]?.trim() || '' })
+      }
+    } else if (/^From the chat:\s*$/.test(line)) inChat = true
+    else rest.push(line)
+  }
+  return { lineup, chat, rest: rest.join('\n').trim() }
+}
+
+const norm = (s) => (s || '').trim().toLowerCase()
+/** Board member a lineup name refers to (full name, then first name). */
+function findMember(members, name) {
+  return members.find((m) => norm(nameOf(m)) === norm(name))
+    || members.find((m) => norm(nameOf(m)).split(/\s+/)[0] === norm(name).split(/\s+/)[0])
+}
+
+/**
+ * Everyone who matters for a gig, one row per board member:
+ * status = their latest answer, or 'listed' (named in the lineup, no answer
+ * yet), or 'none'. `clash` = in the lineup but answered Maybe/Out.
+ */
+function peopleFor(gig, members) {
+  const state = answerState(gig)
+  const listed = new Map()
+  for (const l of splitDetails(gig.details).lineup) {
+    const m = findMember(members, l.name)
+    if (m) listed.set(m.id, l.role)
+  }
+  return members.map((m) => {
+    const e = state.get(m.id)
+    const status = e ? e.current.answer : listed.has(m.id) ? 'listed' : 'none'
+    return { m, e, status, role: listed.get(m.id) || '', listed: listed.has(m.id), clash: listed.has(m.id) && e && e.current.answer !== 'in' }
+  })
+}
+
+function gigCounts(gig, members = []) {
+  const c = { in: 0, maybe: 0, out: 0, listed: 0, changed: 0 }
+  for (const p of peopleFor(gig, members)) {
+    if (p.status !== 'none') c[p.status]++
+    if (p.e?.changedFrom) c.changed++
   }
   return c
 }
+const countLine = (c) => [
+  c.in && `${c.in} in`, c.maybe && `${c.maybe} maybe`, c.out && `${c.out} out`,
+  c.listed && `${c.listed} listed`,
+].filter(Boolean).join(' · ') || 'no answers yet'
 
 /* ================================================================== */
 /* Calendar + agenda                                                   */
@@ -110,8 +165,8 @@ export default function GigsView({ board, members, songs, profile, myRole, notif
   if (!gigs) return <div className="dim gigs-empty">Loading gigs…</div>
 
   const isMine = (g) => {
-    const e = answerState(g).get(myMembership?.id)
-    return e && e.current.answer !== 'out'
+    const me = peopleFor(g, members).find((p) => p.m.id === myMembership?.id)
+    return !!me && ['in', 'maybe', 'listed'].includes(me.status)
   }
   const visible = onlyMine ? gigs.filter(isMine) : gigs
 
@@ -167,10 +222,10 @@ export default function GigsView({ board, members, songs, profile, myRole, notif
             <div key={k} className={`gcal-cell ${out ? 'out' : ''} ${k === today ? 'today' : ''}`}>
               <span className="gcal-n">{d.getDate()}</span>
               {dayGigs.map((g) => {
-                const c = gigCounts(g)
+                const c = gigCounts(g, members)
                 return (
                   <button key={g.id} className={`gpill st-${g.status}`} onClick={() => setOpenId(g.id)}
-                    title={`${g.title} · ${STATUS[g.status]} · ${c.in} in, ${c.maybe} maybe, ${c.out} out`}>
+                    title={`${g.title} · ${STATUS[g.status]} · ${countLine(c)}`}>
                     {c.changed > 0 && <span className="gpill-flag" aria-label="answers changed">↺</span>}
                     {g.title}
                   </button>
@@ -197,7 +252,7 @@ export default function GigsView({ board, members, songs, profile, myRole, notif
           </div>
         )}
         {monthGigs.map((g) => {
-          const c = gigCounts(g)
+          const c = gigCounts(g, members)
           const mine = answerState(g).get(myMembership?.id)?.current?.answer
           return (
             <button key={g.id} className="grow" onClick={() => setOpenId(g.id)}>
@@ -208,7 +263,7 @@ export default function GigsView({ board, members, songs, profile, myRole, notif
               <span className="grow-main">
                 <strong>{g.title}{g.venue ? ` · ${g.venue}` : ''}</strong>
                 <span className="dim tiny">
-                  {c.in} in · {c.maybe} maybe · {c.out} out
+                  {countLine(c)}
                   {c.changed > 0 ? ` · ${c.changed} changed` : ''}
                   {g.gig_songs.length ? ` · ${g.gig_songs.length} songs` : ''}
                 </span>
@@ -348,10 +403,14 @@ function GigModal({ gig, members, songs, profile, canAdmin, notify, onChanged, o
   const whoState = state.get(who)
   useEffect(() => { setPick(whoState?.current?.answer || null); setNote('') }, [who]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const order = { in: 0, maybe: 1, out: 2 }
-  const people = members
-    .map((m) => ({ m, e: state.get(m.id) }))
-    .sort((a, b) => (a.e ? order[a.e.current.answer] : 3) - (b.e ? order[b.e.current.answer] : 3))
+  const [showAll, setShowAll] = useState(false)
+  const order = { in: 0, maybe: 1, listed: 2, out: 3, none: 4 }
+  const everyone = peopleFor(gig, members).sort((a, b) => order[a.status] - order[b.status])
+  const counts = gigCounts(gig, members)
+  const silent = everyone.filter((p) => p.status === 'none')
+  const people = showAll ? everyone : everyone.filter((p) => p.status !== 'none')
+  const clashes = everyone.filter((p) => p.clash)
+  const { chat: chatNotes, rest: detailText } = splitDetails(gig.details)
 
   const saveAnswer = async () => {
     if (!pick) return
@@ -385,25 +444,42 @@ function GigModal({ gig, members, songs, profile, canAdmin, notify, onChanged, o
           )}
         </div>
       </div>
-      {gig.details && <p className="gig-details">{gig.details}</p>}
+      {detailText && <p className="gig-details">{detailText}</p>}
 
       <div className="gig-grid">
         <section className="panel">
-          <h3>Who's in</h3>
+          <h3>Who's in <span className="dim tiny">· {countLine(counts)}</span></h3>
           <div className="gpeople">
-            {people.map(({ m, e }) => (
+            {people.map(({ m, e, status, role, clash }) => (
               <button key={m.id}
-                className={`gperson ${e ? `ans-${e.current.answer}` : 'ans-none'} ${m.user_id ? '' : 'not-joined'} ${expanded === m.id ? 'open' : ''}`}
+                className={`gperson ans-${status === 'listed' ? 'listed' : status} ${m.user_id ? '' : 'not-joined'} ${expanded === m.id ? 'open' : ''}`}
                 onClick={() => setExpanded(expanded === m.id ? null : m.id)}
                 aria-expanded={expanded === m.id}
                 title={m.user_id ? undefined : 'Not joined Jam-Meet yet'}>
                 <span className="avatar sm" style={{ '--c': m.profiles?.color || '#39424e' }}>{initials(nameOf(m))}</span>
-                <span>{nameOf(m)}</span>
-                <span className="gperson-ans">{e ? ANSWER[e.current.answer] : 'No answer'}</span>
+                <span>{nameOf(m)}{role && <i className="gperson-role"> {role}</i>}</span>
+                <span className="gperson-ans">
+                  {e ? `${ANSWER[e.current.answer]} · ${fmtShort(e.current.said_at || e.current.created_at)}`
+                    : status === 'listed' ? 'Listed' : 'No answer'}
+                </span>
                 {e?.changedFrom && <span className="was">was {ANSWER[e.changedFrom]}</span>}
+                {clash && <span className="gclash">in lineup</span>}
               </button>
             ))}
+            {silent.length > 0 && (
+              <button className="btn btn-ghost tiny-btn" onClick={() => setShowAll(!showAll)}>
+                {showAll ? 'Hide' : `+${silent.length}`} not answered
+              </button>
+            )}
           </div>
+          {counts.listed > 0 && (
+            <p className="dim tiny">“Listed” = named in the bandleader's lineup but hasn't said In here yet.</p>
+          )}
+          {clashes.length > 0 && (
+            <p className="galert">
+              {clashes.map((p) => `${nameOf(p.m)} is in the lineup but said ${ANSWER[p.e.current.answer]}`).join('; ')}. Sort this out before the show.
+            </p>
+          )}
           {expanded && (
             <div className="gtrail">
               <strong>{nameOf(byId[expanded])}'s answers for this gig</strong>
@@ -485,6 +561,13 @@ function GigModal({ gig, members, songs, profile, canAdmin, notify, onChanged, o
           ? <p className="dim tiny">No answers yet.</p>
           : <AnswerList rows={log} byId={byId} byUser={byUser} showName />}
       </section>
+
+      {chatNotes.length > 0 && (
+        <details className="panel gchat">
+          <summary><h3><MessageSquare size={14} /> From the chat <span className="dim tiny">· {chatNotes.length}</span></h3></summary>
+          <ul>{chatNotes.map((l, i) => <li key={i}>{l}</li>)}</ul>
+        </details>
+      )}
 
       <GigNotes gig={gig} profile={profile} canAdmin={canAdmin} notify={notify} />
     </Modal>

@@ -782,3 +782,12 @@ input[type='date']:focus, textarea:focus { border-color: var(--teal); outline: n
 .import-row.off { opacity: .45; }
 .import-title { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .mono { font-family: var(--font-mono); }
+.ans-listed { --ac: var(--violet); }
+.gperson.ans-listed { border-style: dashed; }
+.gperson-role { font-style: normal; color: var(--dim); font-size: 12px; }
+.gclash { font: 10.5px var(--font-mono); text-transform: uppercase; padding: 1px 5px; border-radius: 3px; color: var(--hot); background: color-mix(in srgb, var(--hot) 14%, transparent); }
+.galert { margin: 8px 0 0; font-size: 13px; padding: 8px 10px; border-radius: 8px; background: color-mix(in srgb, var(--hot) 12%, transparent); }
+.gchat summary { cursor: pointer; list-style: none; }
+.gchat summary::-webkit-details-marker { display: none; }
+.gchat summary h3 { display: inline-flex; margin: 0; }
+.gchat ul { margin: 8px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; font-size: 13.5px; }

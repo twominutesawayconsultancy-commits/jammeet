@@ -787,7 +787,39 @@ input[type='date']:focus, textarea:focus { border-color: var(--teal); outline: n
 .gperson-role { font-style: normal; color: var(--dim); font-size: 12px; }
 .gclash { font: 10.5px var(--font-mono); text-transform: uppercase; padding: 1px 5px; border-radius: 3px; color: var(--hot); background: color-mix(in srgb, var(--hot) 14%, transparent); }
 .galert { margin: 8px 0 0; font-size: 13px; padding: 8px 10px; border-radius: 8px; background: color-mix(in srgb, var(--hot) 12%, transparent); }
-.gchat summary { cursor: pointer; list-style: none; }
-.gchat summary::-webkit-details-marker { display: none; }
-.gchat summary h3 { display: inline-flex; margin: 0; }
-.gchat ul { margin: 8px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; font-size: 13.5px; }
+
+/* ---- gig sheet (manager view) ---- */
+.gsheet-head { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.gsheet-when { font-size: 16px; }
+.gsheet-summary { margin: 2px 0 0; font-size: 14px; color: var(--dim); }
+.spacer { flex: 1; }
+.gflags { list-style: none; margin: 0 0 12px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.gflag { font-size: 13.5px; padding: 7px 10px; border-radius: 8px; border-left: 3px solid var(--ac); background: color-mix(in srgb, var(--ac) 12%, transparent); }
+.gflag-warn { --ac: var(--amber); }
+.gflag-hot { --ac: var(--hot); }
+.gflag-info { --ac: var(--violet); }
+.gpeople-rows { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; }
+.grow-p { position: relative; border-bottom: 1px solid var(--line-soft); }
+.grow-p:last-child { border-bottom: 0; }
+.grow-p-btn, .grow-open { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 0; background: none; border: 0; color: inherit; text-align: left; cursor: pointer; font: inherit; }
+.grow-open { cursor: default; opacity: .8; }
+.grow-open .avatar { border: 1px dashed var(--amber); background: transparent; color: var(--amber); }
+.grow-p-who { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.25; }
+.grow-p-ans { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; text-align: right; }
+.grow-p .was { position: absolute; left: 40px; bottom: -2px; }
+.grow-p.open .was { position: static; display: inline-block; margin: 0 0 4px 40px; }
+.gsub { margin: 10px 0 2px; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--dim); }
+.ganswer-q { font-weight: 600; }
+.ganswer .row input { flex: 1; min-width: 0; }
+.gsched { list-style: none; margin: 0 0 10px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.gsched li { display: grid; grid-template-columns: 110px 1fr; gap: 10px; font-size: 14px; }
+.gsched b { font-family: var(--font-mono); font-weight: 500; font-size: 12.5px; padding-top: 1px; }
+.gfacts { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; margin: 0; font-size: 14px; }
+.gfacts dt { font: 12px var(--font-mono); color: var(--dim); padding-top: 2px; }
+.gfacts dd { margin: 0; }
+.gfold summary { cursor: pointer; list-style: none; }
+.gfold summary::-webkit-details-marker { display: none; }
+.gfold summary h3 { display: inline-flex; margin: 0; }
+.gfold[open] summary h3 { margin-bottom: 8px; }
+.gchat-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; font-size: 14px; }
+.gchat-list li { display: flex; flex-direction: column; border-left: 2px solid var(--line); padding-left: 10px; }

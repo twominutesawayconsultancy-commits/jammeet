@@ -76,7 +76,7 @@ Order, mobile-first: hero (big date block coloured by status, countdown, venue,
 in/maybe/listed/out tally) → summary callout → fact chips (Travel, Dress, Venue,
 Poll) → flags (open slots, lineup member said Maybe/Out, same people on a gig the
 day before/after, unclear date) → Who's playing (lineup rows with role, latest
-answer, when, chat/app; "Confirmed on call" (internally `listed`) = in the bandleader's lineup, confirmed by phone/in person, no answer in the app; open slots; also answered;
+answer, when, chat/app; "Confirmed on call" (internally `listed`) = confirmed their availability to the bandleader by phone/in person, no answer in the app; open slots; also answered;
 non-answerers folded) + "Are you in?" → Run of show → Setlist → Story so far (one
 timeline of chat notes + answers, answers given together collapse into one entry,
 chat notes already quoted by an answer are hidden) → Notes.

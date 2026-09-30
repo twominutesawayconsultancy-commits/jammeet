@@ -62,11 +62,20 @@ otherwise. `boards.gigs_enabled` (migration-006, default false) controls it:
 - **Chat answers.** `source = 'chat'`, `said_at` = when it was said in WhatsApp,
   `note` = short quote ("Name: …" if someone else reported it). Only owner/admins
   can insert them. Shown with an "in the chat" tag.
-- **Import flow (privacy).** Gigs tab → "Import from chat". The owner exports the
-  group, gives it to Claude with the in-app prompt (`CLAUDE_PROMPT`, GigImport.jsx),
-  pastes back the JSON, maps names to members, ticks gigs/answers, saves. The raw
-  chat never reaches Jam-Meet; re-importing skips answers already saved.
-  JSON shape = the one in the prompt (`gigs` map + `answers_from_chat`).
+- **Import flow (privacy, owner decision 30 Sep 2026: option B).** Gigs tab → "Import from
+  chat" → choose the WhatsApp export (.txt, or .zip via lazily loaded `fflate`).
+  `src/lib/chatReader.js` reads it ON THE DEVICE with fixed rules — no AI, no network:
+  polls (date/city/kind/counts), leader posts with @mentions (lineup = In), "Need X"
+  (open slot), cancel/"clear kardo" (cancelled), confirm (not with %/?/tentative),
+  short In/Out/Maybe replies attached to the gig posted in the last 36 h, follow-ups
+  settling an earlier Maybe, a newer lineup dropping someone (Out, flagged). Replies
+  after two gigs posted together, and day-only / date-move messages, are flagged:
+  uncertain answers come unticked, "Worth a look" items are never saved. Jam/rehearsal
+  posts are ignored; phone numbers are replaced with "[number]". "Read messages since"
+  defaults to the newest chat answer already saved. WhatsApp names (phone nicknames) are
+  matched to members once and remembered per device (localStorage). The review can
+  also change an existing gig's status (e.g. → cancelled). Backup path: paste JSON
+  from Claude.ai using `CLAUDE_PROMPT`. Re-importing skips answers already saved.
 - RLS tested on Woodshed (rolled-back transaction): admin adds people + chat answers;
   admin can't add admins; member can't answer for others, can't write chat answers,
   can't backdate, can't add/edit people; nobody can update answers; outsiders see nothing.

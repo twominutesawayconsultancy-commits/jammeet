@@ -1,11 +1,31 @@
 // GigImport.jsx — owner/admin import of gigs + availability answers from a
-// WhatsApp chat. The chat itself never reaches Jam-Meet: the owner gives the
-// export to Claude with CLAUDE_PROMPT, Claude returns a JSON list of facts, and
-// this screen shows it for review. Only the ticked facts are saved.
+// WhatsApp chat. Main path: upload the WhatsApp export (.txt or .zip) and
+// lib/chatReader.js reads it ON THIS DEVICE with fixed rules — no AI, nothing
+// sent anywhere. Backup path: paste the JSON Claude.ai returns for
+// CLAUDE_PROMPT. Either way this screen shows the facts for review and only
+// the ticked ones are saved.
 import React, { useState, useMemo } from 'react'
 import * as api from './lib/api'
+import { readChat, looksLikeWhatsApp } from './lib/chatReader'
 import { Modal, memberName } from './App.jsx'
-import { Copy, Check, FileUp } from 'lucide-react'
+import { Copy, Check, FileUp, AlertTriangle } from 'lucide-react'
+
+// Which board member each WhatsApp name is, remembered on this device
+// (WhatsApp shows names as saved in the uploader's phone, e.g. a nickname).
+const aliasKey = (boardId) => `jm-chat-names:${boardId}`
+const loadAliases = (boardId) => { try { return JSON.parse(localStorage.getItem(aliasKey(boardId)) || '{}') } catch { return {} } }
+const saveAliases = (boardId, map) => { try { localStorage.setItem(aliasKey(boardId), JSON.stringify(map)) } catch { /* private mode */ } }
+
+async function fileText(f) {
+  if (/\.zip$/i.test(f.name) || f.type.includes('zip')) {
+    const { unzipSync, strFromU8 } = await import('fflate')
+    const files = unzipSync(new Uint8Array(await f.arrayBuffer()))
+    const name = Object.keys(files).find((n) => /_chat\.txt$/i.test(n)) || Object.keys(files).find((n) => /\.txt$/i.test(n))
+    if (!name) throw new Error('No chat .txt inside that zip.')
+    return strFromU8(files[name])
+  }
+  return f.text()
+}
 
 export const CLAUDE_PROMPT = `I'm attaching our band's WhatsApp group export. Read it and give me ONLY a JSON object (no other text) listing our gigs and who said they were available, in this exact shape:
 
@@ -55,10 +75,12 @@ const fmtWhen = (iso) => {
 const STATUS_MAP = { confirmed: 'confirmed', tentative: 'tentative', cancelled: 'cancelled', played: 'confirmed', unclear: 'tentative' }
 
 /** Turn Claude's JSON into gigs / people / answers for review. Throws on bad input. */
-function parseImport(text) {
-  let data
-  try { data = JSON.parse(text.trim().replace(/^```(?:json)?\s*|\s*```$/g, '')) }
-  catch { throw new Error('That isn\'t valid JSON. Paste exactly what Claude gave you.') }
+function parseImport(input) {
+  let data = input
+  if (typeof input === 'string') {
+    try { data = JSON.parse(input.trim().replace(/^```(?:json)?\s*|\s*```$/g, '')) }
+    catch { throw new Error('That isn\'t valid JSON. Paste exactly what Claude gave you.') }
+  }
   const rawGigs = Array.isArray(data.gigs)
     ? data.gigs.map((g, i) => [g.id || `${g.date}-${i}`, g])
     : Object.entries(data.gigs || {})
@@ -103,13 +125,17 @@ function parseImport(text) {
         answer: h.status,
         said_at: new Date(h.at).toISOString(),
         note: (said + quote).slice(0, 300) || null,
+        uncertain: h.uncertain || null,
       })
     }
   }
   const names = new Map()
   for (const a of answers) names.set(norm(a.person), a.person)
   for (const g of gigs) for (const n of g.lineup) if (!names.has(norm(n))) names.set(norm(n), n.trim())
-  return { gigs, answers, people: [...names.values()].sort((a, z) => a.localeCompare(z)) }
+  return {
+    gigs, answers, people: [...names.values()].sort((a, z) => a.localeCompare(z)),
+    checks: (data.checks || []).filter((c) => c && c.text), fromChat: !!data.fromChat,
+  }
 }
 
 export default function GigImportModal({ board, members, gigs: existing, profile, notify, onClose, onDone }) {
@@ -117,27 +143,42 @@ export default function GigImportModal({ board, members, gigs: existing, profile
   const [parsed, setParsed] = useState(null)
   const [copied, setCopied] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [reading, setReading] = useState(false)
+  // Default: read messages after the newest chat answer already saved (else 1 Jan this year).
+  const [since, setSince] = useState(() => {
+    const last = existing.flatMap((g) => g.gig_answers || []).filter((a) => a.source === 'chat')
+      .map((a) => a.said_at).sort().pop()
+    return (last || `${new Date().getFullYear()}-01-01`).slice(0, 10)
+  })
+  const [statusPick, setStatusPick] = useState({}) // gig key → apply status change to existing gig
   // Review choices
   const [personMap, setPersonMap] = useState({}) // name → membership id | 'new' | 'skip'
   const [gigMap, setGigMap] = useState({}) // key → gig id | 'new' | 'skip'
   const [picked, setPicked] = useState({}) // answer id → bool
 
-  const readFile = (f) => {
+  const readFile = async (f) => {
     if (!f) return
-    const r = new FileReader()
-    r.onload = () => setText(String(r.result || ''))
-    r.readAsText(f)
+    setReading(true)
+    try {
+      const t = await fileText(f)
+      if (looksLikeWhatsApp(t)) {
+        const found = readChat(t, { since: since ? new Date(`${since}T00:00:00`) : null })
+        review({ ...found, fromChat: true })
+      } else setText(t)
+    } catch (e) { notify(`Couldn't read that file: ${e.message}`) } finally { setReading(false) }
   }
 
-  const review = () => {
+  const review = (input = text) => {
     let p
-    try { p = parseImport(text) } catch (e) { notify(e.message); return }
-    if (!p.gigs.length) { notify('No gigs found in that list.'); return }
+    try { p = parseImport(input) } catch (e) { notify(e.message); return }
+    if (!p.gigs.length) { notify(p.fromChat ? 'Nothing new about gigs since that date.' : 'No gigs found in that list.'); return }
+    const aliases = loadAliases(board.id)
     const pm = {}
     for (const n of p.people) {
+      const known = aliases[n] && (aliases[n] === 'skip' || members.some((m) => m.id === aliases[n])) ? aliases[n] : null
       const hit = members.find((m) => norm(memberName(m)) === norm(n))
         || members.find((m) => firstWord(memberName(m)) === firstWord(n))
-      pm[n] = hit ? hit.id : 'new'
+      pm[n] = known || (hit ? hit.id : 'new')
     }
     const gm = {}
     for (const g of p.gigs) {
@@ -146,7 +187,8 @@ export default function GigImportModal({ board, members, gigs: existing, profile
       gm[g.key] = hit ? hit.id : 'new'
     }
     setPersonMap(pm); setGigMap(gm); setParsed(p)
-    setPicked(Object.fromEntries(p.answers.map((a) => [a.id, !isSaved(a, pm, gm)])))
+    setPicked(Object.fromEntries(p.answers.map((a) => [a.id, !a.uncertain && !isSaved(a, pm, gm)])))
+    setStatusPick(Object.fromEntries(p.gigs.map((g) => [g.key, true])))
   }
 
   // Same person, gig, answer and moment already on record → don't import twice.
@@ -158,6 +200,12 @@ export default function GigImportModal({ board, members, gigs: existing, profile
       && new Date(x.said_at).getTime() === new Date(a.said_at).getTime())
   }
 
+  // A gig matched to an existing one whose status the chat changed (e.g. now cancelled).
+  const statusChange = (g) => {
+    const e = existing.find((x) => x.id === gigMap[g.key])
+    return e && e.status !== g.status && g.status !== 'tentative' ? { from: e.status, to: g.status, id: e.id } : null
+  }
+
   const counts = useMemo(() => {
     if (!parsed) return null
     const usable = (a) => picked[a.id] && gigMap[a.gigKey] !== 'skip' && personMap[a.person] !== 'skip'
@@ -165,8 +213,10 @@ export default function GigImportModal({ board, members, gigs: existing, profile
       people: Object.values(personMap).filter((v) => v === 'new').length,
       gigs: Object.values(gigMap).filter((v) => v === 'new').length,
       answers: parsed.answers.filter(usable).length,
+      statuses: parsed.gigs.filter((g) => statusChange(g) && statusPick[g.key]).length,
     }
-  }, [parsed, picked, gigMap, personMap])
+  }, [parsed, picked, gigMap, personMap, statusPick]) // eslint-disable-line react-hooks/exhaustive-deps
+
 
   const save = async () => {
     setBusy(true)
@@ -183,11 +233,16 @@ export default function GigImportModal({ board, members, gigs: existing, profile
         })
         gm[g.key] = made.id
       }
+      for (const g of parsed.gigs) {
+        const ch = statusChange(g)
+        if (ch && statusPick[g.key]) await api.updateGig(ch.id, { status: ch.to })
+      }
       const rows = parsed.answers
         .filter((a) => picked[a.id] && gm[a.gigKey] !== 'skip' && pm[a.person] !== 'skip')
         .map((a) => ({ gig_id: gm[a.gigKey], membership_id: pm[a.person], answer: a.answer, note: a.note, said_at: a.said_at }))
       await api.addChatAnswers(rows, profile.id)
-      notify(`Imported: ${counts.people} people, ${counts.gigs} gigs, ${rows.length} answers.`)
+      saveAliases(board.id, { ...loadAliases(board.id), ...pm })
+      notify(`Imported: ${counts.people} people, ${counts.gigs} gigs, ${counts.statuses ? `${counts.statuses} status changes, ` : ''}${rows.length} answers.`)
       onDone()
     } catch (e) {
       notify(`Import stopped: ${e.message}. Anything saved before this stays; run it again and it skips what's already there.`)
@@ -200,32 +255,48 @@ export default function GigImportModal({ board, members, gigs: existing, profile
     return (
       <Modal title="Import gigs from the band chat" onClose={onClose} wide>
         <ol className="import-steps">
-          <li>In WhatsApp: open the band group → ⋮ / group name → <b>Export chat</b> → <b>Without media</b>.</li>
+          <li>In WhatsApp: open the band group → ⋮ / group name → <b>Export chat</b> → <b>Without media</b>. Save the file.</li>
           <li>
-            Open Claude (claude.ai), attach that file and paste this prompt:
-            <button className="btn btn-ghost" onClick={async () => {
+            <label className="row gap tiny">
+              <span>Read messages since</span>
+              <input type="date" value={since} onChange={(e) => setSince(e.target.value)} />
+            </label>
+          </li>
+          <li>
+            <label className="btn btn-primary">
+              <FileUp size={14} /> {reading ? 'Reading…' : 'Choose the export (.txt or .zip)'}
+              <input type="file" accept=".txt,.zip,text/plain,application/zip" hidden disabled={reading}
+                onChange={(e) => { readFile(e.target.files?.[0]); e.target.value = '' }} />
+            </label>
+          </li>
+        </ol>
+        <p className="dim tiny">
+          The chat is read on this device. It isn't uploaded or sent anywhere. You'll check everything
+          before it's saved, and only the gigs, answers and short quotes you tick are kept (visible only to
+          members of this board).
+        </p>
+
+        <details className="import-alt">
+          <summary className="dim tiny">Other way: paste a list from Claude.ai</summary>
+          <p className="dim tiny">
+            For tricky stretches the reader misses: attach the export in Claude.ai with this prompt, then paste its answer here.
+            {' '}<button className="btn btn-ghost tiny-btn" onClick={async () => {
               try { await navigator.clipboard.writeText(CLAUDE_PROMPT); setCopied(true); setTimeout(() => setCopied(false), 2000) }
               catch { notify('Couldn\'t copy. Select the prompt below and copy it.') }
             }}>
-              {copied ? <><Check size={14} /> Copied</> : <><Copy size={14} /> Copy prompt</>}
+              {copied ? <><Check size={13} /> Copied</> : <><Copy size={13} /> Copy prompt</>}
             </button>
-            <details className="import-prompt"><summary className="dim tiny">Show prompt</summary><pre>{CLAUDE_PROMPT}</pre></details>
-          </li>
-          <li>Paste Claude's answer below (or upload it as a .json file). You'll check everything before it's saved.</li>
-        </ol>
-        <p className="dim tiny">
-          The chat itself never comes to Jam-Meet. Only the gigs, answers and short quotes you tick are
-          saved, and only members of this board can see them.
-        </p>
-        <textarea className="import-text" rows={8} value={text} onChange={(e) => setText(e.target.value)}
-          placeholder='{ "gigs": { … }, "answers_from_chat": [ … ] }' />
+          </p>
+          <details className="import-prompt"><summary className="dim tiny">Show prompt</summary><pre>{CLAUDE_PROMPT}</pre></details>
+          <textarea className="import-text" rows={6} value={text} onChange={(e) => setText(e.target.value)}
+            placeholder='{ "gigs": { … }, "answers_from_chat": [ … ] }' />
+          <div className="modal-actions">
+            <button className="btn btn-primary" disabled={!text.trim()} onClick={() => review()}>Review</button>
+          </div>
+        </details>
+
         <div className="modal-actions">
-          <label className="btn btn-ghost">
-            <FileUp size={14} /> Upload .json
-            <input type="file" accept=".json,application/json,text/plain" hidden onChange={(e) => readFile(e.target.files?.[0])} />
-          </label>
           <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" disabled={!text.trim()} onClick={review}>Review</button>
         </div>
       </Modal>
     )
@@ -236,7 +307,10 @@ export default function GigImportModal({ board, members, gigs: existing, profile
     <Modal title="Check before saving" onClose={onClose} wide>
       <section className="panel">
         <h3>People ({parsed.people.length})</h3>
-        <p className="dim tiny">Match each name to someone on the board, or add them. New people get no email for now; add it later in Members and they join with their history.</p>
+        <p className="dim tiny">
+          {parsed.fromChat ? 'These are the names as saved in this phone. ' : ''}Match each name to someone on the board, or add them.
+          {parsed.fromChat ? ' Your choices are remembered on this device for next time.' : ''} New people get no email for now; add it later in Members.
+        </p>
         <div className="import-grid">
           {parsed.people.map((n) => (
             <label key={n} className="row gap tiny">
@@ -261,10 +335,16 @@ export default function GigImportModal({ board, members, gigs: existing, profile
               <select value={gigMap[g.key]} onChange={(e) => setGigMap({ ...gigMap, [g.key]: e.target.value })}>
                 <option value="new">Add as new gig</option>
                 {existing.filter((e) => e.gig_date === g.date).map((e) => (
-                  <option key={e.id} value={e.id}>Same as “{e.title}” (answers only)</option>
+                  <option key={e.id} value={e.id}>Same as “{e.title}”</option>
                 ))}
                 <option value="skip">Skip</option>
               </select>
+              {statusChange(g) && (
+                <label className="row gap tiny import-status">
+                  <input type="checkbox" checked={!!statusPick[g.key]} onChange={(e) => setStatusPick({ ...statusPick, [g.key]: e.target.checked })} />
+                  Change status: {statusChange(g).from} → <b>{statusChange(g).to}</b>
+                </label>
+              )}
             </div>
           ))}
         </div>
@@ -285,6 +365,7 @@ export default function GigImportModal({ board, members, gigs: existing, profile
                 <span className="import-title">
                   <b>{a.person}</b> · {gigByKey[a.gigKey]?.date} {gigByKey[a.gigKey]?.title}
                   <span className="dim tiny"> · said {fmtWhen(a.said_at)}{saved ? ' · already saved' : ''}</span>
+                  {a.uncertain && <span className="import-check"><AlertTriangle size={12} /> {a.uncertain}</span>}
                   {a.note && <span className="glog-note">“{a.note}”</span>}
                 </span>
               </label>
@@ -293,9 +374,21 @@ export default function GigImportModal({ board, members, gigs: existing, profile
         </div>
       </section>
 
+      {parsed.checks.length > 0 && (
+        <section className="panel">
+          <h3><AlertTriangle size={14} /> Worth a look <span className="dim tiny">· not saved</span></h3>
+          <p className="dim tiny">Messages the reader couldn't be sure about. Fix these by hand if they matter.</p>
+          <ul className="import-checks">
+            {parsed.checks.map((c, i) => (
+              <li key={i}><span className="dim tiny">{c.by} · {fmtWhen(c.at)}</span><span>“{c.text}”</span><span className="import-check">{c.reason}</span></li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       <div className="modal-actions">
         <span className="dim tiny">
-          Will add {counts.people} people, {counts.gigs} gigs, {counts.answers} answers. Answers can't be edited
+          Will add {counts.people} people, {counts.gigs} gigs, {counts.answers} answers{counts.statuses ? `, ${counts.statuses} status changes` : ''}. Answers can't be edited
           or deleted afterwards (that's what makes them proof).
         </span>
         <button className="btn btn-ghost" onClick={() => setParsed(null)}>Back</button>

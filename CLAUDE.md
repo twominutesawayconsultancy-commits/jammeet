@@ -40,7 +40,8 @@ index.html                 shell + Google Fonts; loads /src/main.jsx
 src/main.jsx               React entry (StrictMode)
 src/App.jsx                most of the UI: auth, boards, lanes, console, modals
 src/Gigs.jsx               board Gigs tab: calendar, In/Maybe/Out answers (append-only log), setlists, gig notes
-src/GigImport.jsx          owner/admin: review + save gigs/answers Claude extracted from a WhatsApp export
+src/GigImport.jsx          owner/admin: import a WhatsApp export (read on-device) or Claude JSON → review → save
+src/lib/chatReader.js      on-device, rule-based WhatsApp export reader (no AI, no network)
 src/styles.css             dark studio/console design system
 src/supabaseClient.js      client from env vars (or null)
 src/lib/api.js             ALL database + storage calls

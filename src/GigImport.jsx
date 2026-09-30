@@ -78,7 +78,9 @@ function parseImport(text) {
       return {
         key,
         date: g.date,
-        title: [g.city, g.kind].filter(Boolean).join(' · ') || 'Gig',
+        title: [g.city, ...(g.kind || '').split(/\s+·\s+/)]
+          .filter((x, i, arr) => x && norm(x) !== 'unknown' && arr.findIndex((y) => norm(y) === norm(x)) === i)
+          .join(' · ') || 'Gig',
         venue: g.venue || null,
         status: STATUS_MAP[g.status] || 'tentative',
         details: lines.join('\n') || null,

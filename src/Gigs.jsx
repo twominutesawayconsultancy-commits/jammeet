@@ -132,6 +132,38 @@ const countLine = (c) => [
   c.listed && `${c.listed} listed`,
 ].filter(Boolean).join(' · ') || 'no answers yet'
 
+/** Title without repeated or placeholder parts ("Wedding · Wedding · 5-piece" → "Wedding · 5-piece"). */
+function gigTitle(g) {
+  const seen = new Set()
+  const parts = (g.title || '').split(/\s+·\s+/).filter((p) => {
+    const k = p.trim().toLowerCase()
+    if (!k || k === 'unknown' || seen.has(k)) return false
+    seen.add(k); return true
+  })
+  return parts.join(' · ') || 'Gig'
+}
+
+/** What the status means today: past confirmed = Played, past tentative = Unconfirmed. */
+function gigPhase(g) {
+  if (g.status === 'cancelled') return { key: 'cancelled', label: 'Cancelled' }
+  const past = g.gig_date < dayKey(new Date())
+  if (past) return g.status === 'confirmed' ? { key: 'played', label: 'Played' } : { key: 'unconfirmed', label: 'Unconfirmed' }
+  return { key: g.status, label: STATUS[g.status] }
+}
+
+/**
+ * One line for lists: named answers if there are any, else the WhatsApp poll
+ * counts (which never carry names), else "no answers yet". Cancelled gigs
+ * show no counts.
+ */
+function gigLine(g, c) {
+  if (g.status === 'cancelled') return 'Cancelled'
+  const named = c.in + c.maybe + c.out + c.listed
+  if (named) return countLine(c) + (c.changed ? ` · ${c.changed} changed` : '')
+  const poll = parseDetails(g.details).facts.find((f) => f.label === 'Poll')
+  return poll ? `Poll: ${poll.value} · names not recorded` : 'No answers yet'
+}
+
 /* ================================================================== */
 /* Calendar + agenda                                                   */
 /* ================================================================== */
@@ -150,6 +182,22 @@ export default function GigsView({ board, members, songs, profile, myRole, notif
   const [importing, setImporting] = useState(false)
   const canAdmin = myRole === 'owner' || myRole === 'admin'
   const myMembership = members.find((m) => m.user_id === profile.id)
+
+  // A phone can keep an old copy of the app open for days. When a newer
+  // deploy is out, say so on the Gigs tab so nobody reads stale screens.
+  const [stale, setStale] = useState(false)
+  useEffect(() => {
+    const mine = document.querySelector('script[type="module"][src*="/assets/"]')?.getAttribute('src')
+    if (!mine) return undefined // dev server: nothing to compare
+    const check = () => fetch('/', { cache: 'no-store' }).then((r) => r.text()).then((html) => {
+      const live = html.match(/\/assets\/index-[^"']+\.js/)?.[0]
+      if (live && !mine.endsWith(live)) setStale(true)
+    }).catch(() => {})
+    check()
+    const onFocus = () => document.visibilityState === 'visible' && check()
+    document.addEventListener('visibilitychange', onFocus)
+    return () => document.removeEventListener('visibilitychange', onFocus)
+  }, [])
 
   const load = useCallback(() => {
     api.fetchGigs(board.id)
@@ -203,6 +251,12 @@ export default function GigsView({ board, members, songs, profile, myRole, notif
 
   return (
     <div className="gigs">
+      {stale && (
+        <div className="gstale">
+          <span>A newer version of the gig calendar is out.</span>
+          <button className="btn btn-primary tiny-btn" onClick={() => window.location.reload()}>Reload</button>
+        </div>
+      )}
       <div className="gigs-bar">
         <div className="row gap">
           <button className="icon-btn" onClick={() => shift(-1)} aria-label="Previous month"><ChevronLeft size={16} /></button>
@@ -241,10 +295,10 @@ export default function GigsView({ board, members, songs, profile, myRole, notif
               {dayGigs.map((g) => {
                 const c = gigCounts(g, members)
                 return (
-                  <button key={g.id} className={`gpill st-${g.status}`} onClick={() => setOpenId(g.id)}
-                    title={`${g.title} · ${STATUS[g.status]} · ${countLine(c)}`}>
+                  <button key={g.id} className={`gpill st-${gigPhase(g).key}`} onClick={() => setOpenId(g.id)}
+                    title={`${gigTitle(g)} · ${gigPhase(g).label} · ${gigLine(g, c)}`}>
                     {c.changed > 0 && <span className="gpill-flag" aria-label="answers changed">↺</span>}
-                    {g.title}
+                    {gigTitle(g)}
                   </button>
                 )
               })}
@@ -278,16 +332,15 @@ export default function GigsView({ board, members, songs, profile, myRole, notif
                 <small>{fmtDay(g.gig_date, { weekday: 'short' })}</small>
               </span>
               <span className="grow-main">
-                <strong>{g.title}{g.venue ? ` · ${g.venue}` : ''}</strong>
+                <strong className={g.status === 'cancelled' ? 'struck' : ''}>{gigTitle(g)}{g.venue ? ` · ${g.venue}` : ''}</strong>
                 <span className="dim tiny">
-                  {countLine(c)}
-                  {c.changed > 0 ? ` · ${c.changed} changed` : ''}
+                  {gigLine(g, c)}
                   {g.gig_songs.length ? ` · ${g.gig_songs.length} songs` : ''}
                 </span>
               </span>
               <span className="row gap">
                 {mine && <span className={`ans ans-${mine}`}>You: {ANSWER[mine]}</span>}
-                <span className={`gstatus st-${g.status}`}>{STATUS[g.status]}</span>
+                <span className={`gstatus st-${gigPhase(g).key}`}>{gigPhase(g).label}</span>
               </span>
             </button>
           )
@@ -444,7 +497,7 @@ function GigModal({ gig, allGigs, members, songs, profile, canAdmin, notify, onC
     const both = mine.filter((p) => playing(g, p.m.id)).map((p) => nameOf(p.m))
     if (!both.length) continue
     const when = gap === 0 ? 'the same day' : gap === 1 ? 'the next day' : 'the day before'
-    flags.push({ tone: 'info', text: `${both.join(', ')} also ${both.length > 1 ? 'play' : 'plays'} ${g.title} ${when} (${fmtDay(g.gig_date, { day: 'numeric', month: 'short' })})` })
+    flags.push({ tone: 'info', text: `${both.join(', ')} also ${both.length > 1 ? 'play' : 'plays'} ${gigTitle(g)} ${when} (${fmtDay(g.gig_date, { day: 'numeric', month: 'short' })})` })
   }
 
   const days = Math.round((parseDay(gig.gig_date) - parseDay(dayKey(new Date()))) / 86400000)
@@ -521,16 +574,16 @@ function GigModal({ gig, allGigs, members, songs, profile, canAdmin, notify, onC
   }
 
   return (
-    <Modal title={gig.title} onClose={onClose} wide>
+    <Modal title={gigTitle(gig)} onClose={onClose} wide>
       <div className="ghero">
-        <div className={`ghero-date st-${gig.status}`}>
+        <div className={`ghero-date st-${gigPhase(gig).key}`}>
           <span>{gd.toLocaleDateString(undefined, { weekday: 'short' })}</span>
           <b>{gd.getDate()}</b>
           <span>{gd.toLocaleDateString(undefined, { month: 'short' })}</span>
         </div>
         <div className="ghero-main">
           <div className="row gap wrap">
-            <span className={`gstatus st-${gig.status}`}>{STATUS[gig.status]}</span>
+            <span className={`gstatus st-${gigPhase(gig).key}`}>{gigPhase(gig).label}</span>
             <span className="ghero-count"><Clock size={12} /> {countdown}</span>
           </div>
           {gig.venue && <div className="ghero-venue"><MapPin size={13} /> {gig.venue}</div>}
@@ -546,7 +599,7 @@ function GigModal({ gig, allGigs, members, songs, profile, canAdmin, notify, onC
           <div className="ghero-actions">
             <button className="icon-btn" title="Edit gig" onClick={onEdit}><Pencil size={14} /></button>
             <button className="icon-btn danger" title="Delete gig" onClick={async () => {
-              if (!window.confirm(`Delete "${gig.title}"? Its answers, setlist and notes go with it.`)) return
+              if (!window.confirm(`Delete "${gigTitle(gig)}"? Its answers, setlist and notes go with it.`)) return
               try { await api.deleteGig(gig.id); onClose(); onChanged() } catch (e) { notify(e.message) }
             }}><Trash2 size={14} /></button>
           </div>

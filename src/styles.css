@@ -852,3 +852,10 @@ input[type='date']:focus, textarea:focus { border-color: var(--teal); outline: n
 .gstory-body { font-size: 14px; line-height: 1.4; min-width: 0; }
 .gstory-quote { color: var(--dim); font-size: 13.5px; margin-top: 2px; }
 .gstory-who { font-weight: 600; }
+.st-played { --sc: var(--lane-slate); }
+.st-unconfirmed { --sc: var(--dim); }
+.ghero-date.st-played { --ac: var(--lane-slate); }
+.ghero-date.st-unconfirmed { --ac: var(--dim); }
+.gpill.st-played, .gpill.st-unconfirmed { opacity: .7; }
+.struck { text-decoration: line-through; color: var(--dim); }
+.gstale { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; padding: 8px 12px; border-radius: 10px; font-size: 13.5px; background: color-mix(in srgb, var(--teal) 14%, transparent); border: 1px solid color-mix(in srgb, var(--teal) 40%, transparent); }

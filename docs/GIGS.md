@@ -80,6 +80,11 @@ answer, when, chat/app; "Listed" = in lineup, no answer; open slots; also answer
 non-answerers folded) + "Are you in?" → Run of show → Setlist → Story so far (one
 timeline of chat notes + answers, answers given together collapse into one entry,
 chat notes already quoted by an answer are hidden) → Notes.
+Lists: `gigTitle` drops repeated/"Unknown" title parts; `gigPhase` shows past
+confirmed as Played, past tentative as Unconfirmed; `gigLine` shows named answers,
+else the WhatsApp poll counts ("names not recorded"), else "No answers yet";
+cancelled gigs show no counts. The Gigs tab shows "A newer version… Reload" when
+the deployed bundle differs from the one open (phones keep old copies).
 No schema: `parseDetails` (Gigs.jsx) reads labelled lines in `gigs.details`
 (`Lineup:`, `Open:`, `Travel:`, `Dress:`, `Venue:`, `Poll:`, `Needs check:`, indented
 `Schedule:` "time — what" and `From the chat:` blocks); unlabelled lines = summary.

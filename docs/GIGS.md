@@ -71,6 +71,18 @@ otherwise. `boards.gigs_enabled` (migration-006, default false) controls it:
   admin can't add admins; member can't answer for others, can't write chat answers,
   can't backdate, can't add/edit people; nobody can update answers; outsiders see nothing.
 
+## Gig sheet (manager view, 30 Sep 2026)
+Order, mobile-first: header (date, countdown, status, counts, summary) → flags
+(open slots, lineup member said Maybe/Out, same people on a gig the day
+before/after, unclear date) → Who's playing (lineup rows with role, latest answer,
+when, chat/app; "Listed" = in lineup, no answer; open slots; also answered;
+non-answerers folded) + your answer → Itinerary (schedule timeline + Travel/Dress/
+Venue/Poll) → Setlist → Answer log → From the chat → Notes.
+No schema: `parseDetails` (Gigs.jsx) reads labelled lines in `gigs.details`
+(`Lineup:`, `Open:`, `Travel:`, `Dress:`, `Venue:`, `Poll:`, `Needs check:`, indented
+`Schedule:` "time — what" and `From the chat:` blocks); unlabelled lines = summary.
+The importer writes this format; the edit form shows the same hint.
+
 ## Staging (Woodshed)
 - Vercel **preview** builds use the Woodshed Supabase project
   (`niluzclxingovirduisu`) — see `src/supabaseClient.js` (keyed on

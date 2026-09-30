@@ -26,6 +26,7 @@ const fmtStamp = (iso) => new Date(iso).toLocaleString(undefined, {
   day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit',
 })
 const nameOf = memberName
+const fmtShort = (iso) => new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
 
 /** Whose answer a log row is: the membership, or the saved name if they've left. */
 const answerKey = (a) => a.membership_id || `gone:${a.person_name || a.id}`
@@ -51,14 +52,84 @@ function answerState(gig) {
   return map
 }
 
-function gigCounts(gig) {
-  const c = { in: 0, maybe: 0, out: 0, changed: 0 }
-  for (const e of answerState(gig).values()) {
-    c[e.current.answer]++
-    if (e.changedFrom) c.changed++
+/**
+ * Read a gig's details text into sections. The chat importer (GigImport.jsx)
+ * writes labelled lines — "Lineup: A (vocals), B (keys)", "Open: Bassist",
+ * "Travel: …", "Dress: …", "Poll: …", an indented "Schedule:" and
+ * "From the chat:" block — and anything unlabelled is the summary. Details
+ * typed by hand come back as summary text, so nothing is ever hidden.
+ */
+const FACT_LABELS = ['Venue', 'Travel', 'Dress', 'Poll']
+function parseDetails(details) {
+  const d = { summary: [], lineup: [], open: [], facts: [], schedule: [], chat: [], needsCheck: false }
+  let block = null
+  for (const raw of (details || '').split('\n')) {
+    const line = raw.trimEnd()
+    if (block && /^\s+\S/.test(line)) {
+      const t = line.trim()
+      if (block === 'chat') d.chat.push(t)
+      else {
+        const m = t.match(/^(.*?)\s+—\s+(.*)$/)
+        d.schedule.push(m ? { t: m[1], what: m[2] } : { t: '', what: t })
+      }
+      continue
+    }
+    block = null
+    let m
+    if (!line.trim()) continue
+    if (/^From the chat:\s*$/.test(line)) block = 'chat'
+    else if (/^Schedule:\s*$/.test(line)) block = 'schedule'
+    else if (/^Needs check:/.test(line)) d.needsCheck = true
+    else if ((m = line.match(/^Lineup:\s*(.+)$/))) {
+      for (const part of m[1].split(/,\s*/)) {
+        const p = part.match(/^(.*?)\s*(?:\(([^)]*)\))?$/)
+        if (p && p[1]) d.lineup.push({ name: p[1].trim(), role: p[2]?.trim() || '' })
+      }
+    } else if ((m = line.match(/^Open:\s*(.+)$/))) d.open.push(...m[1].split(/,\s*/))
+    else if ((m = line.match(new RegExp(`^(${FACT_LABELS.join('|')}):\\s*(.+)$`)))) d.facts.push({ label: m[1], value: m[2] })
+    else d.summary.push(line.trim())
+  }
+  return d
+}
+
+const norm = (s) => (s || '').trim().toLowerCase()
+/** Board member a lineup name refers to (full name, then first name). */
+function findMember(members, name) {
+  return members.find((m) => norm(nameOf(m)) === norm(name))
+    || members.find((m) => norm(nameOf(m)).split(/\s+/)[0] === norm(name).split(/\s+/)[0])
+}
+
+/**
+ * Everyone who matters for a gig, one row per board member:
+ * status = their latest answer, or 'listed' (named in the lineup, no answer
+ * yet), or 'none'. `clash` = in the lineup but answered Maybe/Out.
+ */
+function peopleFor(gig, members) {
+  const state = answerState(gig)
+  const listed = new Map()
+  for (const l of parseDetails(gig.details).lineup) {
+    const m = findMember(members, l.name)
+    if (m) listed.set(m.id, l.role)
+  }
+  return members.map((m) => {
+    const e = state.get(m.id)
+    const status = e ? e.current.answer : listed.has(m.id) ? 'listed' : 'none'
+    return { m, e, status, role: listed.get(m.id) || '', listed: listed.has(m.id), clash: listed.has(m.id) && e && e.current.answer !== 'in' }
+  })
+}
+
+function gigCounts(gig, members = []) {
+  const c = { in: 0, maybe: 0, out: 0, listed: 0, changed: 0 }
+  for (const p of peopleFor(gig, members)) {
+    if (p.status !== 'none') c[p.status]++
+    if (p.e?.changedFrom) c.changed++
   }
   return c
 }
+const countLine = (c) => [
+  c.in && `${c.in} in`, c.maybe && `${c.maybe} maybe`, c.out && `${c.out} out`,
+  c.listed && `${c.listed} listed`,
+].filter(Boolean).join(' · ') || 'no answers yet'
 
 /* ================================================================== */
 /* Calendar + agenda                                                   */
@@ -110,8 +181,8 @@ export default function GigsView({ board, members, songs, profile, myRole, notif
   if (!gigs) return <div className="dim gigs-empty">Loading gigs…</div>
 
   const isMine = (g) => {
-    const e = answerState(g).get(myMembership?.id)
-    return e && e.current.answer !== 'out'
+    const me = peopleFor(g, members).find((p) => p.m.id === myMembership?.id)
+    return !!me && ['in', 'maybe', 'listed'].includes(me.status)
   }
   const visible = onlyMine ? gigs.filter(isMine) : gigs
 
@@ -167,10 +238,10 @@ export default function GigsView({ board, members, songs, profile, myRole, notif
             <div key={k} className={`gcal-cell ${out ? 'out' : ''} ${k === today ? 'today' : ''}`}>
               <span className="gcal-n">{d.getDate()}</span>
               {dayGigs.map((g) => {
-                const c = gigCounts(g)
+                const c = gigCounts(g, members)
                 return (
                   <button key={g.id} className={`gpill st-${g.status}`} onClick={() => setOpenId(g.id)}
-                    title={`${g.title} · ${STATUS[g.status]} · ${c.in} in, ${c.maybe} maybe, ${c.out} out`}>
+                    title={`${g.title} · ${STATUS[g.status]} · ${countLine(c)}`}>
                     {c.changed > 0 && <span className="gpill-flag" aria-label="answers changed">↺</span>}
                     {g.title}
                   </button>
@@ -197,7 +268,7 @@ export default function GigsView({ board, members, songs, profile, myRole, notif
           </div>
         )}
         {monthGigs.map((g) => {
-          const c = gigCounts(g)
+          const c = gigCounts(g, members)
           const mine = answerState(g).get(myMembership?.id)?.current?.answer
           return (
             <button key={g.id} className="grow" onClick={() => setOpenId(g.id)}>
@@ -208,7 +279,7 @@ export default function GigsView({ board, members, songs, profile, myRole, notif
               <span className="grow-main">
                 <strong>{g.title}{g.venue ? ` · ${g.venue}` : ''}</strong>
                 <span className="dim tiny">
-                  {c.in} in · {c.maybe} maybe · {c.out} out
+                  {countLine(c)}
                   {c.changed > 0 ? ` · ${c.changed} changed` : ''}
                   {g.gig_songs.length ? ` · ${g.gig_songs.length} songs` : ''}
                 </span>
@@ -225,6 +296,7 @@ export default function GigsView({ board, members, songs, profile, myRole, notif
       {openGig && (
         <GigModal
           gig={openGig}
+          allGigs={gigs}
           members={members}
           songs={songs}
           profile={profile}
@@ -316,8 +388,9 @@ function GigFormModal({ gig, boardId, profile, notify, onClose, onSaved }) {
       </label>
       <label className="field">
         <span>Details (optional)</span>
-        <textarea rows={4} value={details} onChange={(e) => setDetails(e.target.value)}
-          placeholder={'Soundcheck 4–6pm, band 9pm\nDress: formals, no blazers\nTravel: meet at Wilson\'s 2pm'} />
+        <textarea rows={8} value={details} onChange={(e) => setDetails(e.target.value)}
+          placeholder={'One-line summary\nLineup: Name (vocals), Name (guitar)\nOpen: Bassist\nTravel: Flight, leave 2 days early\nDress: Formals\nSchedule:\n  4:00pm — Soundcheck\n  9:00pm — Band'} />
+        <span className="dim tiny">Lines starting Lineup:, Open:, Travel:, Dress:, Poll: and an indented Schedule: show as their own sections.</span>
       </label>
       <div className="modal-actions">
         <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
@@ -333,50 +406,95 @@ function GigFormModal({ gig, boardId, profile, notify, onClose, onSaved }) {
 /* One gig: who's in, answers, setlist, notes                          */
 /* ================================================================== */
 
-function GigModal({ gig, members, songs, profile, canAdmin, notify, onChanged, onClose, onEdit, onOpenSong }) {
+function GigModal({ gig, allGigs, members, songs, profile, canAdmin, notify, onChanged, onClose, onEdit, onOpenSong }) {
   const byId = useMemo(() => Object.fromEntries(members.map((m) => [m.id, m])), [members])
   const byUser = useMemo(() => Object.fromEntries(members.filter((m) => m.user_id).map((m) => [m.user_id, m])), [members])
   const myMembership = byUser[profile.id]
-  const state = answerState(gig)
   const [expanded, setExpanded] = useState(null)
-  const [who, setWho] = useState(myMembership?.id)
-  const [pick, setPick] = useState(null)
-  const [note, setNote] = useState('')
-  const [busy, setBusy] = useState(false)
+  const [showAll, setShowAll] = useState(false)
   const [editSet, setEditSet] = useState(false)
 
-  const whoState = state.get(who)
-  useEffect(() => { setPick(whoState?.current?.answer || null); setNote('') }, [who]) // eslint-disable-line react-hooks/exhaustive-deps
+  const d = parseDetails(gig.details)
+  const order = { in: 0, maybe: 1, listed: 2, out: 3, none: 4 }
+  const everyone = peopleFor(gig, members).sort((a, b) =>
+    (b.listed - a.listed) || (order[a.status] - order[b.status]))
+  const counts = gigCounts(gig, members)
+  const lineup = everyone.filter((p) => p.listed)
+  const others = everyone.filter((p) => !p.listed && p.status !== 'none')
+  const silent = everyone.filter((p) => p.status === 'none')
 
-  const order = { in: 0, maybe: 1, out: 2 }
-  const people = members
-    .map((m) => ({ m, e: state.get(m.id) }))
-    .sort((a, b) => (a.e ? order[a.e.current.answer] : 3) - (b.e ? order[b.e.current.answer] : 3))
-
-  const saveAnswer = async () => {
-    if (!pick) return
-    const last = whoState?.current
-    if (last && last.answer === pick && !note.trim()) { notify(`Already marked ${ANSWER[pick]}.`); return }
-    setBusy(true)
-    try {
-      await api.answerGig(gig.id, who, pick, note.trim(), profile.id)
-      setNote(''); setExpanded(who); onChanged()
-    } catch (e) { notify(e.message) } finally { setBusy(false) }
+  // Flags a gig manager must act on before the show.
+  const flags = []
+  if (d.needsCheck) flags.push({ tone: 'warn', text: 'Date or booking unclear in the chat. Confirm with the client.' })
+  for (const o of d.open) flags.push({ tone: 'warn', text: `Need: ${o}` })
+  for (const p of everyone.filter((x) => x.clash)) {
+    flags.push({ tone: 'hot', text: `${nameOf(p.m)} is in the lineup but said ${ANSWER[p.e.current.answer]}` })
+  }
+  const playing = (g, mid) => {
+    const p = peopleFor(g, members).find((x) => x.m.id === mid)
+    return p && ['in', 'listed'].includes(p.status)
+  }
+  // Back-to-back: people playing this gig who also play the day before/after.
+  const mine = everyone.filter((x) => ['in', 'listed'].includes(x.status))
+  for (const g of allGigs) {
+    if (g.id === gig.id || g.status === 'cancelled') continue
+    const gap = Math.round((parseDay(g.gig_date) - parseDay(gig.gig_date)) / 86400000)
+    if (Math.abs(gap) > 1) continue
+    const both = mine.filter((p) => playing(g, p.m.id)).map((p) => nameOf(p.m))
+    if (!both.length) continue
+    const when = gap === 0 ? 'the same day' : gap === 1 ? 'the next day' : 'the day before'
+    flags.push({ tone: 'info', text: `${both.join(', ')} also ${both.length > 1 ? 'play' : 'plays'} ${g.title} ${when} (${fmtDay(g.gig_date, { day: 'numeric', month: 'short' })})` })
   }
 
+  const days = Math.round((parseDay(gig.gig_date) - parseDay(dayKey(new Date()))) / 86400000)
+  const countdown = days === 0 ? 'Today' : days === 1 ? 'Tomorrow' : days > 0 ? `In ${days} days` : days === -1 ? 'Yesterday' : `${-days} days ago`
   const log = [...(gig.gig_answers || [])].reverse()
   const setlist = gig.gig_songs.map((gs) => songs.find((s) => s.id === gs.song_id)).filter(Boolean)
 
+  const personRow = (p) => {
+    const { m, e, status, role } = p
+    const cur = e?.current
+    const open = expanded === m.id
+    return (
+      <li key={m.id} className={`grow-p ans-${status} ${open ? 'open' : ''}`}>
+        <button className="grow-p-btn" onClick={() => setExpanded(open ? null : m.id)} aria-expanded={open}>
+          <span className={`avatar sm ${m.user_id ? '' : 'pending'}`} style={{ '--c': m.profiles?.color || '#39424e' }}
+            title={m.user_id ? undefined : 'Not on Jam-Meet yet'}>{initials(nameOf(m))}</span>
+          <span className="grow-p-who">
+            <b>{nameOf(m)}</b>
+            <span className="dim tiny">{role || '\u00a0'}</span>
+          </span>
+          <span className="grow-p-ans">
+            <span className={`ans ans-${status}`}>{cur ? ANSWER[cur.answer] : status === 'listed' ? 'Listed' : 'No answer'}</span>
+            <span className="dim tiny">
+              {cur ? `${fmtStamp(cur.said_at || cur.created_at)}${cur.source === 'chat' ? ' · chat' : ''}`
+                : status === 'listed' ? 'in lineup, not confirmed' : ''}
+            </span>
+          </span>
+        </button>
+        {e?.changedFrom && <span className="was">was {ANSWER[e.changedFrom]}</span>}
+        {open && (
+          <div className="gtrail">
+            {e ? <AnswerList rows={[...e.history].reverse()} byId={byId} byUser={byUser} showName={false} />
+              : <p className="dim tiny">{status === 'listed' ? 'Named in the lineup. No answer recorded yet.' : 'No answer yet.'}</p>}
+          </div>
+        )}
+      </li>
+    )
+  }
+
   return (
     <Modal title={gig.title} onClose={onClose} wide>
-      <div className="gig-head">
-        <div>
-          <div className="gig-when">{fmtDay(gig.gig_date, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</div>
-          {gig.venue && <div className="dim">{gig.venue}</div>}
+      <div className="gsheet-head">
+        <div className="gsheet-when">
+          <b>{fmtDay(gig.gig_date, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}</b>
+          <span className="dim"> · {countdown}</span>
         </div>
-        <div className="row gap">
+        <div className="row gap wrap">
           <span className={`gstatus st-${gig.status}`}>{STATUS[gig.status]}</span>
-          {canAdmin && <button className="btn btn-ghost" onClick={onEdit}><Pencil size={13} /> Edit</button>}
+          <span className="dim tiny">{countLine(counts)}</span>
+          <span className="spacer" />
+          {canAdmin && <button className="btn btn-ghost tiny-btn" onClick={onEdit}><Pencil size={13} /> Edit</button>}
           {canAdmin && (
             <button className="icon-btn danger" title="Delete gig" onClick={async () => {
               if (!window.confirm(`Delete "${gig.title}"? Its answers, setlist and notes go with it.`)) return
@@ -384,110 +502,169 @@ function GigModal({ gig, members, songs, profile, canAdmin, notify, onChanged, o
             }}><Trash2 size={14} /></button>
           )}
         </div>
+        {gig.venue && <div className="dim">{gig.venue}</div>}
+        {d.summary.length > 0 && <p className="gsheet-summary">{d.summary.join(' ')}</p>}
       </div>
-      {gig.details && <p className="gig-details">{gig.details}</p>}
 
-      <div className="gig-grid">
-        <section className="panel">
-          <h3>Who's in</h3>
-          <div className="gpeople">
-            {people.map(({ m, e }) => (
-              <button key={m.id}
-                className={`gperson ${e ? `ans-${e.current.answer}` : 'ans-none'} ${m.user_id ? '' : 'not-joined'} ${expanded === m.id ? 'open' : ''}`}
-                onClick={() => setExpanded(expanded === m.id ? null : m.id)}
-                aria-expanded={expanded === m.id}
-                title={m.user_id ? undefined : 'Not joined Jam-Meet yet'}>
-                <span className="avatar sm" style={{ '--c': m.profiles?.color || '#39424e' }}>{initials(nameOf(m))}</span>
-                <span>{nameOf(m)}</span>
-                <span className="gperson-ans">{e ? ANSWER[e.current.answer] : 'No answer'}</span>
-                {e?.changedFrom && <span className="was">was {ANSWER[e.changedFrom]}</span>}
-              </button>
-            ))}
-          </div>
-          {expanded && (
-            <div className="gtrail">
-              <strong>{nameOf(byId[expanded])}'s answers for this gig</strong>
-              {state.get(expanded)
-                ? <AnswerList rows={[...state.get(expanded).history].reverse()} byId={byId} byUser={byUser} showName={false} />
-                : <p className="dim tiny">No answer yet.</p>}
-            </div>
-          )}
-
-          <div className="ganswer">
-            <div className="row gap wrap">
-              {canAdmin ? (
-                <label className="row gap tiny">
-                  <span className="dim">Answer for</span>
-                  <select value={who} onChange={(e) => setWho(e.target.value)}>
-                    {members.map((m) => (
-                      <option key={m.id} value={m.id}>{m.user_id === profile.id ? 'Me' : nameOf(m)}{m.user_id ? '' : ' (not joined)'}</option>
-                    ))}
-                  </select>
-                </label>
-              ) : <span className="dim tiny">Your answer</span>}
-            </div>
-            <div className="seg seg-3" role="radiogroup" aria-label="Availability">
-              {['in', 'maybe', 'out'].map((a) => (
-                <button key={a} role="radio" aria-checked={pick === a}
-                  className={`ans-btn ans-${a} ${pick === a ? 'on' : ''}`} onClick={() => setPick(a)}>
-                  {ANSWER[a]}
-                </button>
-              ))}
-            </div>
-            <input value={note} maxLength={300} onChange={(e) => setNote(e.target.value)}
-              placeholder="Reason or condition (optional), e.g. only if we're back by 11pm" />
-            <div className="row spread">
-              <span className="dim tiny">Every change is kept with its time. Nothing is overwritten.</span>
-              <button className="btn btn-primary" disabled={busy || !pick || !who} onClick={saveAnswer}>Save answer</button>
-            </div>
-          </div>
-        </section>
-
-        <section className="panel">
-          <h3><ListMusic size={14} /> Setlist {setlist.length > 0 && <span className="dim tiny">· {setlist.length} songs</span>}</h3>
-          {editSet ? (
-            <SetlistEditor gig={gig} songs={songs} notify={notify}
-              onDone={() => { setEditSet(false); onChanged() }} onCancel={() => setEditSet(false)} />
-          ) : (
-            <>
-              {setlist.length === 0 && <p className="dim tiny">No setlist yet.</p>}
-              <ol className="gsetlist">
-                {setlist.map((s) => {
-                  const r = songReadiness(s, members)
-                  const lane = LANES.find((l) => l.id === r.lane)
-                  const myP = (s.practice || []).find((p) => p.user_id === profile.id)
-                  return (
-                    <li key={s.id}>
-                      <button className="gsong" onClick={() => { onClose(); onOpenSong(s.id) }}
-                        title="Open to rehearse">
-                        <span className="gsong-title">{s.title}</span>
-                        <span className={`glane lane-${lane.tone}`}>{lane.label}{r.avg != null ? ` · ${r.avg.toFixed(1)}` : ''}</span>
-                        <span className="dim tiny">You: {myP?.confidence != null ? `${myP.confidence}/10` : '—'}</span>
-                        <Play size={13} />
-                      </button>
-                    </li>
-                  )
-                })}
-              </ol>
-              {canAdmin && (
-                <button className="btn btn-ghost" onClick={() => setEditSet(true)}>
-                  <Pencil size={13} /> {setlist.length ? 'Edit setlist' : 'Pick songs'}
-                </button>
-              )}
-            </>
-          )}
-        </section>
-      </div>
+      {flags.length > 0 && (
+        <ul className="gflags">
+          {flags.map((f, i) => <li key={i} className={`gflag gflag-${f.tone}`}>{f.text}</li>)}
+        </ul>
+      )}
 
       <section className="panel">
-        <h3><History size={14} /> Answer log · who said what, when</h3>
-        {log.length === 0
-          ? <p className="dim tiny">No answers yet.</p>
-          : <AnswerList rows={log} byId={byId} byUser={byUser} showName />}
+        <h3>Who's playing</h3>
+        {lineup.length === 0 && others.length === 0 && (
+          <p className="dim tiny">No lineup or answers yet{d.facts.some((f) => f.label === 'Poll') ? ' (poll counts are below; WhatsApp polls don\'t record names)' : ''}.</p>
+        )}
+        <ul className="gpeople-rows">
+          {lineup.map(personRow)}
+          {d.open.map((o) => (
+            <li key={`open-${o}`} className="grow-p grow-open">
+              <span className="avatar sm">?</span>
+              <span className="grow-p-who"><b>{o}</b><span className="dim tiny">open slot</span></span>
+            </li>
+          ))}
+        </ul>
+        {others.length > 0 && (
+          <>
+            {lineup.length > 0 && <h4 className="gsub">Also answered</h4>}
+            <ul className="gpeople-rows">{others.map(personRow)}</ul>
+          </>
+        )}
+        {silent.length > 0 && (
+          <>
+            <button className="btn btn-ghost tiny-btn" onClick={() => setShowAll(!showAll)}>
+              {showAll ? 'Hide' : 'Show'} {silent.length} who haven't answered
+            </button>
+            {showAll && <ul className="gpeople-rows">{silent.map(personRow)}</ul>}
+          </>
+        )}
+        <AnswerBox gig={gig} members={members} byUser={byUser} myMembership={myMembership} profile={profile}
+          canAdmin={canAdmin} notify={notify} onSaved={(mid) => { setExpanded(mid); onChanged() }} />
       </section>
+
+      {(d.schedule.length > 0 || d.facts.length > 0) && (
+        <section className="panel">
+          <h3><CalendarDays size={14} /> Itinerary</h3>
+          {d.schedule.length > 0 && (
+            <ol className="gsched">
+              {d.schedule.map((s, i) => <li key={i}><b>{s.t || '—'}</b><span>{s.what}</span></li>)}
+            </ol>
+          )}
+          {d.facts.length > 0 && (
+            <dl className="gfacts">
+              {d.facts.map((f, i) => <React.Fragment key={i}><dt>{f.label}</dt><dd>{f.value}</dd></React.Fragment>)}
+            </dl>
+          )}
+        </section>
+      )}
+
+      <section className="panel">
+        <h3><ListMusic size={14} /> Setlist {setlist.length > 0 && <span className="dim tiny">· {setlist.length} songs</span>}</h3>
+        {editSet ? (
+          <SetlistEditor gig={gig} songs={songs} notify={notify}
+            onDone={() => { setEditSet(false); onChanged() }} onCancel={() => setEditSet(false)} />
+        ) : (
+          <>
+            {setlist.length === 0 && <p className="dim tiny">No setlist yet.</p>}
+            <ol className="gsetlist">
+              {setlist.map((s) => {
+                const r = songReadiness(s, members)
+                const lane = LANES.find((l) => l.id === r.lane)
+                const myP = (s.practice || []).find((p) => p.user_id === profile.id)
+                return (
+                  <li key={s.id}>
+                    <button className="gsong" onClick={() => { onClose(); onOpenSong(s.id) }} title="Open to rehearse">
+                      <span className="gsong-title">{s.title}</span>
+                      <span className={`glane lane-${lane.tone}`}>{lane.label}{r.avg != null ? ` · ${r.avg.toFixed(1)}` : ''}</span>
+                      <span className="dim tiny">You: {myP?.confidence != null ? `${myP.confidence}/10` : '—'}</span>
+                      <Play size={13} />
+                    </button>
+                  </li>
+                )
+              })}
+            </ol>
+            {canAdmin && (
+              <button className="btn btn-ghost tiny-btn" onClick={() => setEditSet(true)}>
+                <Pencil size={13} /> {setlist.length ? 'Edit setlist' : 'Pick songs'}
+              </button>
+            )}
+          </>
+        )}
+      </section>
+
+      <details className="panel gfold" open={log.length > 0 && log.length <= 6}>
+        <summary><h3><History size={14} /> Answer log · who said what, when <span className="dim tiny">· {log.length}</span></h3></summary>
+        {log.length === 0
+          ? <p className="dim tiny">No answers recorded yet.</p>
+          : <AnswerList rows={log} byId={byId} byUser={byUser} showName />}
+      </details>
+
+      {d.chat.length > 0 && (
+        <details className="panel gfold">
+          <summary><h3><MessageSquare size={14} /> From the chat <span className="dim tiny">· {d.chat.length}</span></h3></summary>
+          <ul className="gchat-list">
+            {d.chat.map((l, i) => {
+              const m = l.match(/^([^,]+),\s*([^:]+):\s*(.*)$/)
+              return m
+                ? <li key={i}><span className="dim tiny">{m[1]} · {m[2]}</span><span>{m[3]}</span></li>
+                : <li key={i}><span>{l}</span></li>
+            })}
+          </ul>
+        </details>
+      )}
 
       <GigNotes gig={gig} profile={profile} canAdmin={canAdmin} notify={notify} />
     </Modal>
+  )
+}
+
+/** In / Maybe / Out for yourself (or, for owner/admins, anyone on the board). */
+function AnswerBox({ gig, members, byUser, myMembership, profile, canAdmin, notify, onSaved }) {
+  const state = answerState(gig)
+  const [who, setWho] = useState(myMembership?.id || '')
+  const [pick, setPick] = useState(null)
+  const [note, setNote] = useState('')
+  const [busy, setBusy] = useState(false)
+  const whoState = state.get(who)
+  useEffect(() => { setPick(whoState?.current?.answer || null); setNote('') }, [who]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const save = async () => {
+    if (!pick || !who) return
+    const last = whoState?.current
+    if (last && last.answer === pick && !note.trim()) { notify(`Already marked ${ANSWER[pick]}.`); return }
+    setBusy(true)
+    try { await api.answerGig(gig.id, who, pick, note.trim(), profile.id); setNote(''); onSaved(who) }
+    catch (e) { notify(e.message) } finally { setBusy(false) }
+  }
+  const self = who === myMembership?.id
+  return (
+    <div className="ganswer">
+      <div className="row gap wrap">
+        <span className="ganswer-q">{self ? 'Are you in?' : 'Answer for'}</span>
+        {canAdmin && (
+          <select value={who} onChange={(e) => setWho(e.target.value)} aria-label="Whose answer">
+            {members.map((m) => (
+              <option key={m.id} value={m.id}>{m.user_id === profile.id ? 'Me' : nameOf(m)}{m.user_id ? '' : ' (not joined)'}</option>
+            ))}
+          </select>
+        )}
+      </div>
+      <div className="seg seg-3" role="radiogroup" aria-label="Availability">
+        {['in', 'maybe', 'out'].map((a) => (
+          <button key={a} role="radio" aria-checked={pick === a}
+            className={`ans-btn ans-${a} ${pick === a ? 'on' : ''}`} onClick={() => setPick(a)}>{ANSWER[a]}</button>
+        ))}
+      </div>
+      {pick && (
+        <div className="row gap">
+          <input value={note} maxLength={300} onChange={(e) => setNote(e.target.value)} placeholder="Reason or condition (optional)" />
+          <button className="btn btn-primary" disabled={busy} onClick={save}>Save</button>
+        </div>
+      )}
+      <span className="dim tiny">Every change is kept with its time.</span>
+    </div>
   )
 }
 

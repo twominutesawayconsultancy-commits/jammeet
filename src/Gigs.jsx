@@ -566,7 +566,7 @@ function GigModal({ gig, allGigs, members, songs, profile, canAdmin, notify, onC
         {open && (
           <div className="gtrail">
             {e ? <AnswerList rows={[...e.history].reverse()} byId={byId} byUser={byUser} showName={false} />
-              : <p className="dim tiny">{status === 'listed' ? 'In the bandleader\'s lineup, confirmed on a call or in person. Nothing recorded in the app yet.' : 'No answer yet.'}</p>}
+              : <p className="dim tiny">{status === 'listed' ? 'Confirmed their availability to the bandleader on a call or in person. Nothing recorded in the app yet.' : 'No answer yet.'}</p>}
           </div>
         )}
       </li>
@@ -638,7 +638,7 @@ function GigModal({ gig, allGigs, members, songs, profile, canAdmin, notify, onC
           ))}
         </ul>
         {counts.listed > 0 && (
-          <p className="dim tiny gnote">Confirmed on call = the bandleader confirmed them by phone or in person. They haven't answered in the app yet.</p>
+          <p className="dim tiny gnote">Confirmed on call = they confirmed their availability to the bandleader by phone or in person. They haven't answered in the app yet.</p>
         )}
         {others.length > 0 && (
           <>

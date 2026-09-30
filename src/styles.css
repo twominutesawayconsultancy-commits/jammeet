@@ -823,3 +823,32 @@ input[type='date']:focus, textarea:focus { border-color: var(--teal); outline: n
 .gfold[open] summary h3 { margin-bottom: 8px; }
 .gchat-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; font-size: 14px; }
 .gchat-list li { display: flex; flex-direction: column; border-left: 2px solid var(--line); padding-left: 10px; }
+
+/* ---- gig sheet: hero, chips, story ---- */
+.ghero { display: flex; gap: 14px; align-items: flex-start; margin-bottom: 12px; }
+.ghero-date { flex: none; width: 66px; border-radius: 12px; padding: 6px 0 7px; text-align: center; display: flex; flex-direction: column; line-height: 1.05;
+  background: color-mix(in srgb, var(--ac, var(--lane-slate)) 16%, var(--panel-2)); border: 1px solid color-mix(in srgb, var(--ac, var(--lane-slate)) 40%, transparent); }
+.ghero-date.st-confirmed { --ac: var(--lane-green); }
+.ghero-date.st-tentative { --ac: var(--amber); }
+.ghero-date.st-cancelled { --ac: var(--hot); }
+.ghero-date span { font: 11px var(--font-mono); text-transform: uppercase; letter-spacing: .08em; color: var(--dim); }
+.ghero-date b { font-size: 30px; font-weight: 800; margin: 2px 0; }
+.ghero-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.ghero-count, .ghero-venue { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; color: var(--dim); }
+.ghero-venue { color: inherit; font-size: 14px; }
+.ghero-tally { display: flex; flex-wrap: wrap; gap: 5px; }
+.ghero-actions { display: flex; flex-direction: column; gap: 4px; }
+.gsummary { margin: 0 0 12px; padding: 10px 12px; border-radius: 10px; background: var(--panel-2); font-size: 14.5px; line-height: 1.45; }
+.gchips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 12px; }
+.gchip { display: inline-flex; align-items: flex-start; gap: 6px; padding: 5px 10px; border-radius: 999px; border: 1px solid var(--line); font-size: 13px; max-width: 100%; }
+.gchip svg { flex: none; margin-top: 2px; color: var(--dim); }
+.gchip i { font-style: normal; color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; margin-right: 2px; }
+.gstory { list-style: none; margin: 0; padding: 0; }
+.gstory-item { display: grid; grid-template-columns: 50px 14px 1fr; gap: 0 8px; position: relative; padding-bottom: 12px; }
+.gstory-item::before { content: ''; position: absolute; left: 64px; top: 12px; bottom: 0; width: 1px; background: var(--line); }
+.gstory-item:last-child::before { display: none; }
+.gstory-day { font: 11.5px var(--font-mono); color: var(--dim); text-transform: uppercase; padding-top: 2px; text-align: right; }
+.gstory-dot { width: 9px; height: 9px; border-radius: 50%; margin-top: 5px; background: var(--ac, var(--lane-slate)); box-shadow: 0 0 0 3px var(--panel); z-index: 1; }
+.gstory-body { font-size: 14px; line-height: 1.4; min-width: 0; }
+.gstory-quote { color: var(--dim); font-size: 13.5px; margin-top: 2px; }
+.gstory-who { font-weight: 600; }

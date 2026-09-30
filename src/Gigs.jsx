@@ -8,6 +8,7 @@ import GigImportModal from './GigImport.jsx'
 import {
   ChevronLeft, ChevronRight, Plus, Pencil, Trash2, Send, X, CalendarDays,
   ListMusic, MessageSquare, History, ArrowUp, ArrowDown, Play, FileUp,
+  Plane, Shirt, BarChart3, MapPin, Clock,
 } from 'lucide-react'
 
 const STATUS = {
@@ -448,8 +449,44 @@ function GigModal({ gig, allGigs, members, songs, profile, canAdmin, notify, onC
 
   const days = Math.round((parseDay(gig.gig_date) - parseDay(dayKey(new Date()))) / 86400000)
   const countdown = days === 0 ? 'Today' : days === 1 ? 'Tomorrow' : days > 0 ? `In ${days} days` : days === -1 ? 'Yesterday' : `${-days} days ago`
-  const log = [...(gig.gig_answers || [])].reverse()
   const setlist = gig.gig_songs.map((gs) => songs.find((s) => s.id === gs.song_id)).filter(Boolean)
+
+  // One "story so far" timeline: chat notes + answers, oldest first. Answers
+  // recorded together (same moment, answer and quote — e.g. a lineup message)
+  // collapse into one entry with several names.
+  const story = useMemo(() => {
+    const items = []
+    const gigDay = parseDay(gig.gig_date)
+    for (const l of d.chat) {
+      const m = l.match(/^([^,]+),\s*(\d{1,2} [A-Za-z]{3})[a-z]*:\s*(.*)$/)
+      if (!m) { items.push({ kind: 'chat', at: null, who: '', text: l }); continue }
+      let at = new Date(`${m[2]} ${gigDay.getFullYear()} 12:00`)
+      if (Number.isNaN(at.getTime())) at = null
+      else if (at > gigDay) at.setFullYear(at.getFullYear() - 1)
+      items.push({ kind: 'chat', at, who: m[1].trim(), text: m[3] })
+    }
+    const groups = new Map()
+    for (const a of gig.gig_answers || []) {
+      const k = `${a.said_at}|${a.answer}|${a.note || ''}`
+      const g = groups.get(k) || { kind: 'ans', at: new Date(a.said_at || a.created_at), answer: a.answer, note: a.note, source: a.source, names: [] }
+      g.names.push(byId[a.membership_id] ? nameOf(byId[a.membership_id]) : (a.person_name || 'Someone'))
+      groups.set(k, g)
+    }
+    // A chat note the answers already quote (same day) is shown once, on the answers.
+    const flat = (t) => (t || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+    const sameDay = (x, y) => x && y && x.toDateString() === y.toDateString()
+    const answered = [...groups.values()]
+    const keep = items.filter((c) => {
+      const key = flat(c.text).slice(0, 24)
+      return !key || !answered.some((g) => sameDay(g.at, c.at) && flat(g.note).includes(key))
+    })
+    keep.push(...answered)
+    return keep.sort((a, z) => (a.at?.getTime() ?? 0) - (z.at?.getTime() ?? 0))
+  }, [gig, members]) // eslint-disable-line react-hooks/exhaustive-deps
+  const [storyAll, setStoryAll] = useState(false)
+  const shownStory = storyAll ? story : story.slice(-5)
+  const factIcon = { Travel: Plane, Dress: Shirt, Poll: BarChart3, Venue: MapPin }
+  const gd = parseDay(gig.gig_date)
 
   const personRow = (p) => {
     const { m, e, status, role } = p
@@ -485,26 +522,47 @@ function GigModal({ gig, allGigs, members, songs, profile, canAdmin, notify, onC
 
   return (
     <Modal title={gig.title} onClose={onClose} wide>
-      <div className="gsheet-head">
-        <div className="gsheet-when">
-          <b>{fmtDay(gig.gig_date, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}</b>
-          <span className="dim"> · {countdown}</span>
+      <div className="ghero">
+        <div className={`ghero-date st-${gig.status}`}>
+          <span>{gd.toLocaleDateString(undefined, { weekday: 'short' })}</span>
+          <b>{gd.getDate()}</b>
+          <span>{gd.toLocaleDateString(undefined, { month: 'short' })}</span>
         </div>
-        <div className="row gap wrap">
-          <span className={`gstatus st-${gig.status}`}>{STATUS[gig.status]}</span>
-          <span className="dim tiny">{countLine(counts)}</span>
-          <span className="spacer" />
-          {canAdmin && <button className="btn btn-ghost tiny-btn" onClick={onEdit}><Pencil size={13} /> Edit</button>}
-          {canAdmin && (
+        <div className="ghero-main">
+          <div className="row gap wrap">
+            <span className={`gstatus st-${gig.status}`}>{STATUS[gig.status]}</span>
+            <span className="ghero-count"><Clock size={12} /> {countdown}</span>
+          </div>
+          {gig.venue && <div className="ghero-venue"><MapPin size={13} /> {gig.venue}</div>}
+          <div className="ghero-tally">
+            {counts.in > 0 && <span className="ans ans-in">{counts.in} in</span>}
+            {counts.maybe > 0 && <span className="ans ans-maybe">{counts.maybe} maybe</span>}
+            {counts.listed > 0 && <span className="ans ans-listed">{counts.listed} listed</span>}
+            {counts.out > 0 && <span className="ans ans-out">{counts.out} out</span>}
+            {!counts.in && !counts.maybe && !counts.listed && !counts.out && <span className="dim tiny">No answers yet</span>}
+          </div>
+        </div>
+        {canAdmin && (
+          <div className="ghero-actions">
+            <button className="icon-btn" title="Edit gig" onClick={onEdit}><Pencil size={14} /></button>
             <button className="icon-btn danger" title="Delete gig" onClick={async () => {
               if (!window.confirm(`Delete "${gig.title}"? Its answers, setlist and notes go with it.`)) return
               try { await api.deleteGig(gig.id); onClose(); onChanged() } catch (e) { notify(e.message) }
             }}><Trash2 size={14} /></button>
-          )}
-        </div>
-        {gig.venue && <div className="dim">{gig.venue}</div>}
-        {d.summary.length > 0 && <p className="gsheet-summary">{d.summary.join(' ')}</p>}
+          </div>
+        )}
       </div>
+
+      {d.summary.length > 0 && <p className="gsummary">{d.summary.join(' ')}</p>}
+
+      {d.facts.length > 0 && (
+        <div className="gchips">
+          {d.facts.map((f, i) => {
+            const Icon = factIcon[f.label] || CalendarDays
+            return <span key={i} className="gchip" title={f.label}><Icon size={13} /><span><i>{f.label}</i> {f.value}</span></span>
+          })}
+        </div>
+      )}
 
       {flags.length > 0 && (
         <ul className="gflags">
@@ -544,19 +602,12 @@ function GigModal({ gig, allGigs, members, songs, profile, canAdmin, notify, onC
           canAdmin={canAdmin} notify={notify} onSaved={(mid) => { setExpanded(mid); onChanged() }} />
       </section>
 
-      {(d.schedule.length > 0 || d.facts.length > 0) && (
+      {d.schedule.length > 0 && (
         <section className="panel">
-          <h3><CalendarDays size={14} /> Itinerary</h3>
-          {d.schedule.length > 0 && (
-            <ol className="gsched">
-              {d.schedule.map((s, i) => <li key={i}><b>{s.t || '—'}</b><span>{s.what}</span></li>)}
-            </ol>
-          )}
-          {d.facts.length > 0 && (
-            <dl className="gfacts">
-              {d.facts.map((f, i) => <React.Fragment key={i}><dt>{f.label}</dt><dd>{f.value}</dd></React.Fragment>)}
-            </dl>
-          )}
+          <h3><Clock size={14} /> Run of show</h3>
+          <ol className="gsched">
+            {d.schedule.map((x, i) => <li key={i}><b>{x.t || '—'}</b><span>{x.what}</span></li>)}
+          </ol>
         </section>
       )}
 
@@ -594,26 +645,37 @@ function GigModal({ gig, allGigs, members, songs, profile, canAdmin, notify, onC
         )}
       </section>
 
-      <details className="panel gfold" open={log.length > 0 && log.length <= 6}>
-        <summary><h3><History size={14} /> Answer log · who said what, when <span className="dim tiny">· {log.length}</span></h3></summary>
-        {log.length === 0
-          ? <p className="dim tiny">No answers recorded yet.</p>
-          : <AnswerList rows={log} byId={byId} byUser={byUser} showName />}
-      </details>
-
-      {d.chat.length > 0 && (
-        <details className="panel gfold">
-          <summary><h3><MessageSquare size={14} /> From the chat <span className="dim tiny">· {d.chat.length}</span></h3></summary>
-          <ul className="gchat-list">
-            {d.chat.map((l, i) => {
-              const m = l.match(/^([^,]+),\s*([^:]+):\s*(.*)$/)
-              return m
-                ? <li key={i}><span className="dim tiny">{m[1]} · {m[2]}</span><span>{m[3]}</span></li>
-                : <li key={i}><span>{l}</span></li>
-            })}
-          </ul>
-        </details>
-      )}
+      <section className="panel">
+        <h3><History size={14} /> Story so far <span className="dim tiny">· who said what, when</span></h3>
+        {story.length === 0 && <p className="dim tiny">Nothing recorded yet.</p>}
+        {story.length > shownStory.length && (
+          <button className="btn btn-ghost tiny-btn" onClick={() => setStoryAll(true)}>Show {story.length - shownStory.length} earlier</button>
+        )}
+        <ol className="gstory">
+          {shownStory.map((it, i) => {
+            const prev = shownStory[i - 1]
+            const day = it.at ? it.at.toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) : ''
+            const prevDay = prev?.at ? prev.at.toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) : ''
+            return (
+              <li key={i} className={`gstory-item ${it.kind === 'ans' ? `ans-${it.answer}` : ''}`}>
+                <span className="gstory-day">{day !== prevDay ? day : ''}</span>
+                <span className="gstory-dot" />
+                <div className="gstory-body">
+                  {it.kind === 'ans' ? (
+                    <>
+                      <div><span className={`ans ans-${it.answer}`}>{ANSWER[it.answer]}</span> <b>{it.names.join(', ')}</b>
+                        <span className="dim tiny"> · {it.at.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}{it.source === 'chat' ? ' · chat' : ''}</span></div>
+                      {it.note && <div className="gstory-quote">“{it.note}”</div>}
+                    </>
+                  ) : (
+                    <div>{it.who && <b className="gstory-who">{it.who}: </b>}{it.text}</div>
+                  )}
+                </div>
+              </li>
+            )
+          })}
+        </ol>
+      </section>
 
       <GigNotes gig={gig} profile={profile} canAdmin={canAdmin} notify={notify} />
     </Modal>

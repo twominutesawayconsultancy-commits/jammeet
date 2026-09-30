@@ -72,12 +72,14 @@ otherwise. `boards.gigs_enabled` (migration-006, default false) controls it:
   can't backdate, can't add/edit people; nobody can update answers; outsiders see nothing.
 
 ## Gig sheet (manager view, 30 Sep 2026)
-Order, mobile-first: header (date, countdown, status, counts, summary) → flags
-(open slots, lineup member said Maybe/Out, same people on a gig the day
-before/after, unclear date) → Who's playing (lineup rows with role, latest answer,
-when, chat/app; "Listed" = in lineup, no answer; open slots; also answered;
-non-answerers folded) + your answer → Itinerary (schedule timeline + Travel/Dress/
-Venue/Poll) → Setlist → Answer log → From the chat → Notes.
+Order, mobile-first: hero (big date block coloured by status, countdown, venue,
+in/maybe/listed/out tally) → summary callout → fact chips (Travel, Dress, Venue,
+Poll) → flags (open slots, lineup member said Maybe/Out, same people on a gig the
+day before/after, unclear date) → Who's playing (lineup rows with role, latest
+answer, when, chat/app; "Listed" = in lineup, no answer; open slots; also answered;
+non-answerers folded) + "Are you in?" → Run of show → Setlist → Story so far (one
+timeline of chat notes + answers, answers given together collapse into one entry,
+chat notes already quoted by an answer are hidden) → Notes.
 No schema: `parseDetails` (Gigs.jsx) reads labelled lines in `gigs.details`
 (`Lineup:`, `Open:`, `Travel:`, `Dress:`, `Venue:`, `Poll:`, `Needs check:`, indented
 `Schedule:` "time — what" and `From the chat:` blocks); unlabelled lines = summary.

@@ -39,7 +39,9 @@ export const CLAUDE_PROMPT = `I'm attaching our band's WhatsApp group export. Re
 Rules:
 - Use each person's real first name, not their WhatsApp saved name, and the same spelling every time.
 - "at" is the exact time of the message where they said it. Keep every change (yes, then no, then maybe) as a separate history entry, oldest first.
-- If someone else reports a person's answer (e.g. the bandleader lists the lineup), "said" is who wrote it.
+- If someone else reports a person's answer, "said" is who wrote it.
+- When the bandleader confirms a lineup (names or @mentions, e.g. "4th dec Goa: @A @B, need bassist"), add an "in" entry for EACH named person at that message's time, with "said" = the bandleader. If a later lineup for the same show drops someone, add an "out" entry for them at that later time.
+- Replies like "busy", "nahi ho payega", "can't" are "out"; "locked", "confirm", "in", 🔒 are "in". If it's unclear which show a reply is about, don't add it; mention it in that gig's "summary".
 - Partial dates ("22 ko", "15 feb 27"): anchor to the message date; if unsure, set status "unclear" and say why in "summary". Never guess.
 - Poll votes don't show names in exports: put the counts in "poll", don't invent answers.
 - No phone numbers, no money amounts, nothing personal beyond who is playing which show.`

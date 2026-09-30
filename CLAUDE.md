@@ -11,6 +11,7 @@ not-yet-rated counts as 0 (`songReadiness(song, members)`).
 > other goal. See Guardrails.
 
 See `docs/GIGS.md` for the Gigs feature (calendar, availability, setlists): state, staging, next steps.
+See `docs/SIGN-IN.md` for the Google sign-in settings that must never drift (and what to do if sign-in breaks).
 See `docs/AUDIT.md` for the current technical audit, open owner questions, and the
 proposed Phase 1 sequence.
 
@@ -56,6 +57,7 @@ supabase/migration-006-band-roster.sql         boards.gigs_enabled per-board swi
                                                chat-sourced answers (source/said_at/person_name). Live since 2026-09-30;
                                                gigs_enabled ONLY on the Arindam Sinha Collective board (owner rule)
 docs/AUDIT.md              technical audit + owner answers
+docs/SIGN-IN.md            Google/Supabase sign-in settings runbook
 ```
 
 ## Architecture

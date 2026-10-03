@@ -293,6 +293,14 @@ export async function replaceStemAudio(boardId, songId, stem, file) {
   return path
 }
 
+/** Owner or admin: save the song's band mix (each track's level). RLS: "stems update". */
+export async function saveStemGains(rows) {
+  const results = await Promise.all(
+    rows.map(({ id, gain }) => supabase.from('stems').update({ gain }).eq('id', id))
+  )
+  results.forEach(({ error }) => throwIf(error))
+}
+
 export async function renameStem(stemId, name) {
   const { error } = await supabase.from('stems').update({ name }).eq('id', stemId)
   throwIf(error)

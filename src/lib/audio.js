@@ -8,6 +8,9 @@
 let _ctx = null
 export function getCtx() {
   if (!_ctx) {
+    // Safari 16.4+: treat us as a music player (keeps playing with the ringer
+    // switch off and, where iOS allows, with the screen locked).
+    try { if (navigator.audioSession) navigator.audioSession.type = 'playback' } catch { /* unsupported */ }
     const AC = window.AudioContext || window.webkitAudioContext
     _ctx = new AC()
   }
@@ -234,18 +237,23 @@ export class Mixer {
 
     this.tracks = [] // { id, name, buffer, gainNode, analyser, gain, muted, solo }
     this._sources = []
+    this._nextSources = [] // the next loop lap, scheduled ahead so it starts gaplessly
+    this._nextStart = null // ctx time the next lap starts (null = none scheduled)
+    this._ticker = null // keeps the transport moving when the tab is in the background
     this.playing = false
     this.offset = 0 // transport position when stopped / at last (re)start
     this.startCtxTime = 0
     this.duration = 0
-    this.loop = true
+    this._loop = true
     this.onPassComplete = null // fired every time the transport reaches the end
 
     // metronome
     this.metroOn = false
     this.bpm = 100
     this.beatsPerBar = 4
-    this._nextBeatIdx = 0
+    this._beatIdx = 0
+    this._beatLapStart = 0 // ctx time of transport 0 in the lap the next beat belongs to
+    this._clicks = new Set()
     this._metroGain = this.ctx.createGain()
     this._metroGain.gain.value = 0.5
     this._metroGain.connect(this.master)
@@ -330,28 +338,61 @@ export class Mixer {
     return Math.min(this.offset + (this.ctx.currentTime - this.startCtxTime), this.duration)
   }
 
-  async play() {
-    if (this.playing || this.tracks.length === 0) return
-    if (this.ctx.state === 'suspended') await this.ctx.resume()
-    const t0 = this.ctx.currentTime + 0.08 // small lead so every stem starts sample-synced
-    this._sources = []
+  get loop() { return this._loop }
+  set loop(v) {
+    this._loop = v
+    if (!v) this._cancelNextLap() // the lap already queued must not play
+  }
+
+  /** Start every track's source at ctx time `when`, from transport position `from`. */
+  _startSources(when, from) {
+    const sources = []
     this.tracks.forEach((t) => {
-      if (this.offset >= t.buffer.duration) return // shorter stem already finished
+      if (from >= t.buffer.duration) return // shorter stem already finished
       const src = this.ctx.createBufferSource()
       src.buffer = t.buffer
       src.connect(t.gainNode)
-      src.start(t0, this.offset)
-      this._sources.push(src)
+      src.start(when, from)
+      sources.push(src)
     })
+    return sources
+  }
+
+  async play() {
+    if (this.playing || this.tracks.length === 0) return
+    if (this.ctx.state !== 'running') await this.ctx.resume()
+    const t0 = this.ctx.currentTime + 0.08 // small lead so every stem starts sample-synced
+    this._sources = this._startSources(t0, this.offset)
     this.startCtxTime = t0
     this.playing = true
     const spb = 60 / this.bpm
-    this._nextBeatIdx = Math.ceil(this.offset / spb - 1e-6)
+    this._beatLapStart = t0 - this.offset
+    this._beatIdx = Math.ceil(this.offset / spb - 1e-6)
+    // requestAnimationFrame stops when the phone locks or the app is in the
+    // background; this timer keeps loops, pass counting and the metronome going.
+    clearInterval(this._ticker)
+    this._ticker = setInterval(() => this.update(), 250)
+  }
+
+  _cancelNextLap() {
+    this._nextSources.forEach((s) => { try { s.stop() } catch { /* not started */ } })
+    this._nextSources = []
+    this._nextStart = null
   }
 
   _stopSources() {
     this._sources.forEach((s) => { try { s.stop() } catch { /* already stopped */ } })
     this._sources = []
+    this._cancelNextLap()
+    this._clicks.forEach((o) => { try { o.stop() } catch { /* done */ } })
+    this._clicks.clear()
+    clearInterval(this._ticker)
+    this._ticker = null
+  }
+
+  /** Called when coming back to the app: wake an audio clock the OS paused. */
+  resumeIfNeeded() {
+    if (this.playing && this.ctx.state !== 'running') this.ctx.resume().catch(() => {})
   }
 
   pause() {
@@ -389,40 +430,72 @@ export class Mixer {
     g.gain.exponentialRampToValueAtTime(0.0001, ctxTime + 0.045)
     osc.start(ctxTime)
     osc.stop(ctxTime + 0.06)
+    this._clicks.add(osc)
+    osc.onended = () => this._clicks.delete(osc)
   }
 
   /**
-   * Drive from requestAnimationFrame. Handles loop/pass detection and
-   * metronome lookahead scheduling. Returns current transport position.
+   * Called from requestAnimationFrame in the foreground and from a timer always
+   * (background timers may only fire about once a second). Handles loop/pass
+   * detection and metronome scheduling. Returns the current transport position.
    */
   update() {
     if (!this.playing) return this.position
-    const pos = this.position
+    const now = this.ctx.currentTime
+    const lapEnd = this.startCtxTime + (this.duration - this.offset)
+    // Look further ahead than one (possibly throttled) timer tick.
+    const lookahead = 1.5
+
+    // Queue the next loop lap at the exact end of this one, so it starts
+    // gaplessly even if this code only runs once a second.
+    if (this._loop && this._nextStart === null && lapEnd - now < lookahead) {
+      this._nextStart = lapEnd
+      this._nextSources = this._startSources(lapEnd, 0)
+    }
 
     if (this.metroOn) {
       const spb = 60 / this.bpm
-      const lookahead = 0.18
-      while (this._nextBeatIdx * spb < pos + lookahead) {
-        const beatTransportT = this._nextBeatIdx * spb
-        if (beatTransportT >= this.duration) break
-        const ctxT = this.startCtxTime + (beatTransportT - this.offset)
-        if (ctxT >= this.ctx.currentTime - 0.02) {
-          this._click(Math.max(ctxT, this.ctx.currentTime + 0.001), this._nextBeatIdx % this.beatsPerBar === 0)
+      for (;;) {
+        const t = this._beatIdx * spb
+        if (t >= this.duration - 1e-6) {
+          // carry on into the queued next lap, if any
+          if (this._nextStart !== null && this._beatLapStart < this._nextStart - 1e-6) {
+            this._beatLapStart = this._nextStart
+            this._beatIdx = 0
+            continue
+          }
+          break
         }
-        this._nextBeatIdx++
+        const ctxT = this._beatLapStart + t
+        if (ctxT > now + lookahead) break
+        if (ctxT >= now - 0.02) {
+          this._click(Math.max(ctxT, now + 0.001), this._beatIdx % this.beatsPerBar === 0)
+        }
+        this._beatIdx++
       }
+    } else {
+      // keep the beat counter in step so turning the metronome on lands on the beat
+      const spb = 60 / this.bpm
+      const lapStart = this._nextStart !== null && now >= this._nextStart ? this._nextStart : this.startCtxTime - this.offset
+      this._beatLapStart = lapStart
+      this._beatIdx = Math.max(0, Math.ceil((now - lapStart) / spb - 1e-6))
     }
 
-    if (pos >= this.duration - 0.03) {
+    if (this._nextStart !== null && now >= this._nextStart) {
+      // the queued lap has started: that was one full pass
+      this._sources = this._nextSources
+      this.startCtxTime = this._nextStart
+      this.offset = 0
+      this._nextSources = []
+      this._nextStart = null
       if (this.onPassComplete) this.onPassComplete()
-      if (this.loop) {
-        this._stopSources()
-        this.playing = false
-        this.offset = 0
-        this.play()
-      } else {
-        this.stop()
-      }
+      return this.position
+    }
+
+    const pos = this.position
+    if (!this._loop && pos >= this.duration - 0.03) {
+      if (this.onPassComplete) this.onPassComplete()
+      this.stop()
     }
     return pos
   }

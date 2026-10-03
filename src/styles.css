@@ -414,6 +414,14 @@ select { cursor: pointer; }
 }
 .console-loading.error { color: var(--hot); }
 
+/* --- band mix bar (levels differ from the saved mix) --- */
+
+.mix-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  flex-wrap: wrap; margin-bottom: 12px; padding: 8px 10px;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2);
+}
+
 /* --- channel strips --- */
 
 .strips {

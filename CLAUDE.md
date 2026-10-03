@@ -85,8 +85,15 @@ docs/SIGN-IN.md            Google/Supabase sign-in settings runbook
   1-hour signed URLs. Storage RLS derives permissions from the first path segment
   (board id) — keep that path scheme.
 - **Mixer** (`audio.js`): one shared `AudioContext`; per-track gain + analyser;
-  sample-synced start with 80 ms lead; `update()` is driven by the SongView rAF loop
-  and handles looping, metronome lookahead, and pass detection.
+  sample-synced start with 80 ms lead. `update()` runs from the SongView rAF loop AND
+  a 250 ms timer started in `play()` (rAF stops in the background / screen locked), so it
+  must stay idempotent. It queues the next loop lap ~1.5 s ahead at the exact lap end
+  (gapless even with 1 s background timers) and schedules metronome clicks 1.5 s ahead;
+  `_stopSources()` cancels the queued lap and pending clicks. Media Session lock-screen
+  controls + `navigator.audioSession.type = 'playback'` (Safari) are set up in SongView/getCtx.
+- **Band mix:** `stems.gain` is the saved level per track. Owner/admin save it ("Save band
+  mix" → `api.saveStemGains`); everyone's fader moves are local until saved, and the
+  song always opens at the saved mix. Mute/solo are personal and never saved.
 - **Play counting:** a pass = transport reaching the end (each loop lap counts) →
   `increment_play` RPC. Rating unlocks at 3 passes (UI-enforced only); a check-in
   prompt asks for a rating at 3, 6, 9, 15, then every 5 passes (`isRatingMilestone`).

@@ -1458,6 +1458,60 @@ function SongView({ boardId, song, members, myRole, profile, refresh, onBack, no
     else { await mixer.play(); setPlaying(true) }
   }
 
+  // Coming back to the app: the phone may have paused the audio clock.
+  useEffect(() => {
+    const onVisible = () => { if (!document.hidden) mixerRef.current?.resumeIfNeeded() }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [])
+
+  // Lock-screen / notification controls (where the browser supports them).
+  const togglePlayRef = useRef(togglePlay)
+  togglePlayRef.current = togglePlay
+  useEffect(() => {
+    const ms = navigator.mediaSession
+    if (!ms || loadState !== 'ready') return
+    try {
+      if (window.MediaMetadata) ms.metadata = new window.MediaMetadata({ title: song.title, artist: 'Jammit On' })
+      ms.setActionHandler('play', () => { if (!mixerRef.current?.playing) togglePlayRef.current() })
+      ms.setActionHandler('pause', () => { if (mixerRef.current?.playing) togglePlayRef.current() })
+      ms.setActionHandler('stop', () => { mixerRef.current?.stop(); setPlaying(false) })
+    } catch { /* some actions unsupported */ }
+    return () => {
+      for (const a of ['play', 'pause', 'stop']) { try { ms.setActionHandler(a, null) } catch { /* noop */ } }
+      try { ms.metadata = null } catch { /* noop */ }
+    }
+  }, [loadState, song.title])
+  useEffect(() => {
+    try { if (navigator.mediaSession) navigator.mediaSession.playbackState = playing ? 'playing' : 'paused' } catch { /* noop */ }
+  }, [playing])
+
+  // Band mix: the owner/admin's saved level per track. Anyone can move faders
+  // while they play; only owner/admin can save, and everyone else's moves reset
+  // to the band mix the next time the song opens.
+  const savedGains = useMemo(
+    () => Object.fromEntries(song.stems.map((s) => [s.id, s.gain ?? 1])),
+    [song.stems]
+  )
+  const mixChanged = song.stems.some((s) => {
+    const ui = trackUi[s.id]
+    return ui && Math.abs(ui.gain - savedGains[s.id]) > 0.001
+  })
+  const [savingMix, setSavingMix] = useState(false)
+  const saveMix = async () => {
+    setSavingMix(true)
+    try {
+      await api.saveStemGains(song.stems.map((s) => ({ id: s.id, gain: trackUi[s.id]?.gain ?? savedGains[s.id] })))
+      notify('Band mix saved — everyone starts from these levels.', 'info')
+      refresh()
+    } catch (e) { notify(e.message) }
+    setSavingMix(false)
+  }
+  const resetMix = () => {
+    for (const s of song.stems) mixer?.setTrackGain(s.id, savedGains[s.id])
+    setTrackUi((t) => Object.fromEntries(Object.entries(t).map(([id, ui]) => [id, { ...ui, gain: savedGains[id] ?? ui.gain }])))
+  }
+
   const seekFromEvent = (e) => {
     if (!mixer || mixer.duration === 0) return
     const rect = e.currentTarget.getBoundingClientRect()
@@ -1504,6 +1558,25 @@ function SongView({ boardId, song, members, myRole, profile, refresh, onBack, no
 
           {loadState === 'ready' && (
             <>
+              {mixChanged && (
+                <div className="mix-bar">
+                  <span className="tiny dim">
+                    {canAdmin
+                      ? 'Levels changed. Save them as the band mix everyone starts from?'
+                      : 'Your level changes are just for you — the song opens at the band mix next time.'}
+                  </span>
+                  <div className="row gap">
+                    <button className="btn btn-ghost btn-sm" onClick={resetMix}>
+                      <RefreshCw size={13} /> Reset to band mix
+                    </button>
+                    {canAdmin && (
+                      <button className="btn btn-primary btn-sm" onClick={saveMix} disabled={savingMix}>
+                        {savingMix ? 'Saving…' : 'Save band mix'}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
               <div className="strips">
                 {song.stems.map((s) => {
                   const ui = trackUi[s.id] || { gain: 1, muted: false, solo: false }

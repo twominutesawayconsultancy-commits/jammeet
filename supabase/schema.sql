@@ -107,6 +107,35 @@ create index if not exists idx_practice_song     on public.practice(song_id);
 create index if not exists idx_comments_song     on public.comments(song_id);
 
 -- ============================================================================
+-- 1b. TABLE PRIVILEGES (Data API access) — mirrors migration-007-table-grants.sql
+--
+-- Supabase auto-granted these to the API roles until 2026-10-30; after that,
+-- newly created tables in `public` need them explicitly or the Data API
+-- (PostgREST / supabase-js) returns "permission denied". Existing tables keep
+-- their grants, so the live DB is unaffected — this is purely so a rebuild
+-- (new project / preview branch / `supabase db reset`) reproduces today's
+-- access. RLS below is still the real gate: every policy is `to authenticated`,
+-- so `anon` gets table-level SELECT but no rows. Guarded + idempotent: grants
+-- only tables that exist, so the Gigs tables (created by migration-005/006) are
+-- skipped here when schema.sql runs first and covered by migration-007 after.
+-- ============================================================================
+
+do $$
+declare t text;
+begin
+  foreach t in array array[
+    'profiles','boards','memberships','songs','stems','practice','comments',
+    'gigs','gig_answers','gig_songs','gig_notes'
+  ] loop
+    if to_regclass('public.' || t) is not null then
+      execute format('grant select on public.%I to anon', t);
+      execute format('grant select, insert, update, delete on public.%I to authenticated', t);
+      execute format('grant select, insert, update, delete on public.%I to service_role', t);
+    end if;
+  end loop;
+end $$;
+
+-- ============================================================================
 -- 2. HELPER FUNCTIONS (SECURITY DEFINER — prevents RLS recursion)
 -- ============================================================================
 

@@ -56,6 +56,7 @@ supabase/migration-005-gigs.sql                gigs, gig_answers (append-only), 
 supabase/migration-006-band-roster.sql         boards.gigs_enabled per-board switch (Gigs only where on); band people without accounts (placeholder emails), answers per membership,
                                                chat-sourced answers (source/said_at/person_name). Live since 2026-09-30;
                                                gigs_enabled ONLY on the Arindam Sinha Collective board (owner rule)
+supabase/migration-007-table-grants.sql        explicit Data API grants on all public tables (Supabase stops auto-granting new tables 2026-10-30); no-op on existing/live tables, protects rebuilds. Also folded into schema.sql
 docs/AUDIT.md              technical audit + owner answers
 docs/SIGN-IN.md            Google/Supabase sign-in settings runbook
 ```
